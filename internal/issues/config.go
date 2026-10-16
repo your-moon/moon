@@ -12,7 +12,8 @@ import (
 // Repo is one tracked GitHub repository under a short local alias.
 type Repo struct {
 	Alias  string
-	GitHub string // owner/name
+	GitHub string // owner/name; empty for a local-only repo
+	Local  bool   // local = true: issues live only in the mirror, nothing syncs
 }
 
 // Config is the parsed moon.toml. Parsed once at the boundary; nothing else reads the file.
@@ -83,7 +84,8 @@ Create one, for example:
 //
 //	mirror_dir = "path"            # optional, default .moon/issues beside moon.toml
 //	[repos.<alias>]
-//	github = "owner/name"
+//	github = "owner/name"         # exactly one of github or local = true
+//	local = true                  # local-only tracker, never synced
 func LoadConfig(path string) (*Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -101,8 +103,11 @@ func LoadConfig(path string) (*Config, error) {
 		if cur == nil {
 			return nil
 		}
-		if cur.GitHub == "" {
-			return fmt.Errorf("%s: [repos.%s] needs github = \"owner/name\"", path, cur.Alias)
+		switch {
+		case cur.GitHub != "" && cur.Local:
+			return fmt.Errorf("%s: [repos.%s] sets both github and local = true; use exactly one of them", path, cur.Alias)
+		case cur.GitHub == "" && !cur.Local:
+			return fmt.Errorf("%s: [repos.%s] needs exactly one of github = \"owner/name\" or local = true", path, cur.Alias)
 		}
 		c.Repos = append(c.Repos, *cur)
 		cur = nil
@@ -140,6 +145,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s:%d: want key = \"value\"", path, n)
 		}
 		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if cur != nil && k == "local" {
+			if v != "true" && v != "false" {
+				return nil, fmt.Errorf("%s:%d: local must be true or false (unquoted), got %s", path, n, v)
+			}
+			cur.Local = v == "true"
+			continue
+		}
 		if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' {
 			return nil, fmt.Errorf("%s:%d: value of %s must be a quoted string", path, n, k)
 		}
@@ -215,4 +227,37 @@ func (a *App) repoFull(alias string) string {
 		}
 	}
 	return ""
+}
+
+// localOnly reports whether alias is a [repos.<alias>] with local = true.
+func (a *App) localOnly(alias string) bool {
+	for _, r := range a.Repos {
+		if r.Alias == alias {
+			return r.Local
+		}
+	}
+	return false
+}
+
+// splitLocal separates local-only aliases from GitHub-backed ones, keeping order.
+func (a *App) splitLocal(shorts []string) (remote, local []string) {
+	for _, s := range shorts {
+		if a.localOnly(s) {
+			local = append(local, s)
+		} else {
+			remote = append(remote, s)
+		}
+	}
+	return
+}
+
+// noteLocalOnly prints the no-op message for local-only aliases when the user named one
+// (--repo) or when nothing else is left to sync.
+func (a *App) noteLocalOnly(o *Opts, local []string, remoteLeft int) {
+	if o.str("repo") == "" && remoteLeft > 0 {
+		return
+	}
+	for _, s := range local {
+		a.printf("%s is local-only: nothing to sync\n", s)
+	}
 }

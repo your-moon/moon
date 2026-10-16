@@ -34,6 +34,28 @@ Each `[repos.<alias>]` declares one repository (`github = "owner/name"`, alias i
 plus `moon version`. Run `moon issues help` for the flags. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
 mirror older than 10 minutes, `ISSUES_KEEP_DAYS` (default 30) is how long closed items keep their file, `ISSUES_GH` points at another `gh` binary.
 
+## Local numbering
+
+A new issue that is not on GitHub yet gets a short sequential id per repo alias: `app#L-1`, `app#L-2`, ... Numbers come
+from `<mirror>/<alias>/local-seq`, updated under an exclusive file lock, and are never reused, even after the issue is
+closed or pushed. After a push lands, `app#L-3` keeps resolving to the real issue through `localmap.tsv`, and `show` prints
+`ref: L-3 (now #612)`. In `ls`, unpushed issues carry a trailing `local` column. Older ids of the form
+`L-<14 digits>-<4 hex>` stay valid.
+
+## Local-only trackers
+
+A repo with no GitHub behind it: declare `local = true` instead of `github`. Issues are numbered `notes#1`, `notes#2`, ...
+and live only in the mirror; `push`, `pull` and `sync` print "alias is local-only: nothing to sync" and exit 0.
+
+    [repos.notes]
+    local = true
+
+    moon issues new --repo notes --title "buy milk" --body "two litres"   # ref notes#1
+    moon issues ls --repo notes; moon issues close notes#1
+
+Exactly one of `github` or `local = true` is allowed per repo. Everything else (`ls show claim milestones label comment close
+reopen edit status`) works as for a GitHub repo, with the same on-disk layout.
+
 ## Build and test
 
     go build -o dist/moon ./cmd/moon

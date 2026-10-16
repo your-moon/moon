@@ -1,6 +1,7 @@
 package issues
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,8 +50,17 @@ func (a *App) collect(o *Opts, state, q string) []row {
 			}
 			out = append(out, row{short + "#" + num, short + "#" + num + "\t" + st + "\t" + orDash(rms) + "\t" + orDash(labels) + "\t" + title})
 		}
+		var pend []*Op
 		for _, op := range a.loadOutbox() {
-			if op.Op != "new" || shortOf(op.Ref) != short || state == "closed" {
+			if op.Op == "new" && shortOf(op.Ref) == short {
+				pend = append(pend, op)
+			}
+		}
+		sort.SliceStable(pend, func(i, j int) bool { // numeric: L-2 before L-10
+			return cmpLocalIdent(pend[i].Ref[len(short)+1:], pend[j].Ref[len(short)+1:]) < 0
+		})
+		for _, op := range pend {
+			if state == "closed" {
 				continue
 			}
 			t := op.Args
@@ -66,7 +76,7 @@ func (a *App) collect(o *Opts, state, q string) []row {
 			if q != "" && !strings.Contains(strings.ToLower(title), q) {
 				continue
 			}
-			out = append(out, row{op.Ref, op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)"})
+			out = append(out, row{op.Ref, op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)\tlocal"})
 		}
 	}
 	return out
@@ -192,6 +202,7 @@ func (a *App) cmdShow(o *Opts) error {
 		return err
 	}
 	ops := a.loadOutbox()
+	nowNote := ""
 	if isLocalIdent(ident) {
 		n := 0
 		pend := false
@@ -204,6 +215,7 @@ func (a *App) cmdShow(o *Opts) error {
 			n = a.localmapLookup(short, ident)
 		}
 		if n != 0 {
+			nowNote = fmt.Sprintf("ref: %s (now #%d)\n", ident, n)
 			ref = short + "#" + strconv.Itoa(n)
 			ident = strconv.Itoa(n)
 		}
@@ -224,6 +236,7 @@ func (a *App) cmdShow(o *Opts) error {
 	} else {
 		a.printf("claim: none\n")
 	}
+	a.printf("%s", nowNote)
 	if isLocalIdent(ident) {
 		var nw *Op
 		for _, op := range pending {
@@ -244,7 +257,7 @@ func (a *App) cmdShow(o *Opts) error {
 			}
 		}
 		applyOps(e, rest)
-		a.printf("ref: %s (pending sync: not on GitHub yet)\ntitle: %s\nstate: %s\nlabels: %s\nmilestone: %s\n\n%s\n",
+		a.printf("ref: %s (local, pending sync: not on GitHub yet)\ntitle: %s\nstate: %s\nlabels: %s\nmilestone: %s\n\n%s\n",
 			ref, e.title, e.state, strings.Join(e.labels, ","), orDash(e.milestone), e.body)
 	} else {
 		p := filepath.Join(a.Home, short, ident+".md")
@@ -254,6 +267,8 @@ func (a *App) cmdShow(o *Opts) error {
 		text, rerr := readText(p)
 		if rerr == nil {
 			h = readHeader(p)
+		} else if isNotExist(rerr) && a.localOnly(short) {
+			return die1("no such issue %s", ref)
 		} else if isNotExist(rerr) {
 			found := false
 			for _, r := range a.readIndex(short) {
@@ -312,6 +327,12 @@ func (a *App) cmdShow(o *Opts) error {
 
 func (a *App) cmdMilestones(o *Opts) error {
 	for _, short := range a.shortsFor(o) {
+		if a.localOnly(short) {
+			for _, line := range a.localMilestones(short) {
+				a.printf("%s\t%s\n", short, line)
+			}
+			continue
+		}
 		s, err := readText(filepath.Join(a.Home, short, "milestones.tsv"))
 		if err != nil {
 			continue
@@ -346,6 +367,10 @@ func (a *App) cmdStatus(o *Opts) error {
 		}
 	}
 	for _, short := range a.Shorts() {
+		if a.localOnly(short) {
+			a.printf("%s: local-only, issues=%d\n", short, len(a.readIndex(short)))
+			continue
+		}
 		s, err := readText(filepath.Join(a.Home, short, "lastpull"))
 		t, perr := strconv.Atoi(pyStrip(s))
 		if err != nil || perr != nil {
@@ -478,4 +503,36 @@ func (a *App) cmdClaims(o *Opts) error {
 		a.printf("%s\t%s\t%s\t%s\tpid=%s\tage=%ds\tttl=%ds\n", strings.Replace(strings.TrimSuffix(n, ".json"), "-", "#", 1), st, c.Agent, c.Host, pid, int(a.nowEpoch()-c.TS), int(c.TTL))
 	}
 	return nil
+}
+
+// localMilestones derives the milestone table of a local-only alias from its index rows:
+// title, state, closed count, open count, due (never set locally).
+func (a *App) localMilestones(short string) []string {
+	closed, open := map[string]int{}, map[string]int{}
+	var titles []string
+	for _, r := range a.readIndex(short) {
+		m := r[2]
+		if m == "" {
+			continue
+		}
+		if _, ok := closed[m]; !ok {
+			titles = append(titles, m)
+			closed[m] = 0
+		}
+		if r[1] == "closed" {
+			closed[m]++
+		} else {
+			open[m]++
+		}
+	}
+	sort.Strings(titles)
+	var out []string
+	for _, m := range titles {
+		st := "open"
+		if open[m] == 0 {
+			st = "closed"
+		}
+		out = append(out, fmt.Sprintf("%s\t%s\t%d\t%d\t", m, st, closed[m], open[m]))
+	}
+	return out
 }
