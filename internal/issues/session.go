@@ -135,7 +135,13 @@ func (s *Session) createdAt(short, num string) string {
 }
 
 // Load reads the index, claims and outbox. It never panics on a missing or empty mirror.
-func (s *Session) Load() Snapshot {
+func (s *Session) Load() Snapshot { return s.load(true) }
+
+// LoadQuick is Load without the per-issue created_at read (Created stays empty): one index read per
+// alias instead of one file open per issue. Shell completion uses it to stay fast on big mirrors.
+func (s *Session) LoadQuick() Snapshot { return s.load(false) }
+
+func (s *Session) load(withCreated bool) Snapshot {
 	a := s.app
 	snap := Snapshot{Aliases: a.Shorts(), Missing: true, PullAgeSec: 0, LabelColors: map[string]map[string]string{}}
 	we := a.newWorkEnv()
@@ -177,7 +183,10 @@ func (s *Session) Load() Snapshot {
 			}
 			applyOps(e, pend)
 			it := Item{Ref: ref, Alias: short, Num: n, State: e.state, Milestone: e.milestone, Labels: e.labels, Updated: r[4],
-				Created: s.createdAt(short, r[0]), Title: e.title, Pending: len(pend)}
+				Title: e.title, Pending: len(pend)}
+			if withCreated {
+				it.Created = s.createdAt(short, r[0])
+			}
 			it.Work = we.status(ref, short, n, e.state, e.labels)
 			if c := claims[ref]; c != nil {
 				it.Claim = s.claimInfo(c)
@@ -459,4 +468,33 @@ func (s *Session) Milestones() []MilestoneRow {
 func (s *Session) SetMilestone(ref, title string) error {
 	_, err := s.run(func(a *App) error { return a.cmdSimple("milestone")(newOpts([]string{ref, title})) })
 	return err
+}
+
+// Label queues label changes like `moon issues label <ref> --add A --remove B`.
+func (s *Session) Label(ref string, add, remove []string) error {
+	o := newOpts([]string{ref})
+	o.L["add"], o.L["remove"] = add, remove
+	_, err := s.run(func(a *App) error { return a.cmdSimple("label")(o) })
+	return err
+}
+
+// PRItem is one pull request of the mirror, for completion.
+type PRItem struct {
+	Ref, Alias, State, Title, Updated string
+	Num                               int
+}
+
+// PRs reads prs.tsv for every alias. Mirror only, no network.
+func (s *Session) PRs() []PRItem {
+	var out []PRItem
+	for _, short := range s.app.Shorts() {
+		for _, r := range s.app.readPRs(short) {
+			n, err := strconv.Atoi(r.Number)
+			if err != nil {
+				continue
+			}
+			out = append(out, PRItem{Ref: short + "#" + r.Number, Alias: short, Num: n, State: r.State, Title: r.Title, Updated: r.UpdatedAt})
+		}
+	}
+	return out
 }

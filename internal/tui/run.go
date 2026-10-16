@@ -2,7 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	"golang.org/x/term"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -11,9 +14,32 @@ import (
 	"github.com/your-moon/moon/internal/issues"
 )
 
+// isTerminal reports whether a stream (stdin or stdout) is a terminal. Tests replace it.
+var isTerminal = func(stream any) bool {
+	f, ok := stream.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// runProgram starts the Bubble Tea program. Tests replace it so that no program ever starts.
+var runProgram = func(m tea.Model) error {
+	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	return err
+}
+
+const needTerminal = "moon tui is interactive and needs a terminal; use `moon issues ls` / `show` in scripts"
+
 // Run starts the dashboard for `moon tui` or `moon issues tui`. args are the flags after the command:
 // --config FILE, --dir MIRROR, --agent NAME. It returns the process exit status.
 func Run(args []string, e issues.Env) int {
+	// Refuse before anything else: no session, no program. An agent that opens the TUI would wait for keys forever.
+	if e.Getenv("MOON_NO_TUI") != "" {
+		fmt.Fprintln(e.Err, needTerminal+" (MOON_NO_TUI is set)")
+		return 2
+	}
+	if !isTerminal(e.Stdin) || !isTerminal(e.Out) {
+		fmt.Fprintln(e.Err, needTerminal)
+		return 2
+	}
 	var cfg, dir, agent, colorMode string
 	noColor := false
 	for i := 0; i < len(args); i++ {
@@ -77,7 +103,7 @@ func Run(args []string, e issues.Env) int {
 			NewClaimsTab(sess),
 		}, 0)
 	}
-	if _, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
+	if err := runProgram(model); err != nil {
 		fmt.Fprintln(e.Err, "moon tui:", err)
 		return 1
 	}
