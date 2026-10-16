@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,6 +22,10 @@ type fl struct {
 	req     bool
 }
 
+type flset []fl
+
+func (f flset) with(more ...[]fl) flset { return append(f, cat(more...)...) }
+
 type spec struct {
 	fls  []fl
 	npos int
@@ -31,6 +36,15 @@ type spec struct {
 func repoFl() fl    { return fl{name: "repo", kind: 's'} }
 func freshFl() fl   { return fl{name: "fresh", kind: 'b'} }
 func bodyFls() []fl { return []fl{{name: "body", kind: 's'}, {name: "body-file", kind: 's'}} }
+
+// fmtFls: how a human wants the output. sortFls: ordering and size, for the long lists.
+func fmtFls() []fl {
+	return []fl{{name: "format", kind: 's', choices: []string{"auto", "table", "tsv", "json"}, def: "auto"}, {name: "no-color", kind: 'b'}}
+}
+func sortFls() []fl {
+	return []fl{{name: "sort", kind: 's', choices: []string{"number", "updated", "created", "title"}},
+		{name: "reverse", short: "r", kind: 'b'}, {name: "limit", kind: 's'}}
+}
 func cat(l ...[]fl) []fl {
 	var out []fl
 	for _, x := range l {
@@ -40,21 +54,25 @@ func cat(l ...[]fl) []fl {
 }
 
 func commands() map[string]*spec {
-	one := func(f ...fl) []fl { return f }
+	one := func(f ...fl) flset { return f }
 	return map[string]*spec{
 		"ls": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
-			fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}, fl{name: "q", short: "q", kind: 's'}), read: true, run: (*App).cmdLs},
-		"show":       {fls: one(freshFl()), npos: 1, read: true, run: (*App).cmdShow},
-		"milestones": {fls: one(repoFl(), freshFl()), read: true, run: (*App).cmdMilestones},
+			fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}, fl{name: "q", short: "q", kind: 's'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdLs},
+		"show": {fls: one(freshFl()).with(fmtFls()), npos: 1, read: true, run: (*App).cmdShow},
+		"milestones": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}}).with(fmtFls(),
+			[]fl{{name: "sort", kind: 's', choices: []string{"due", "progress", "title", "open"}}, {name: "reverse", short: "r", kind: 'b'}, {name: "limit", kind: 's'}}),
+			read: true, run: (*App).cmdMilestones},
+		"milestones show": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
+			fl{name: "label", kind: 's'}).with(fmtFls(), sortFls()), npos: 1, read: true, run: (*App).cmdMilestoneShow},
 		"prs": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "merged", "closed", "all"}, def: "open"},
-			fl{name: "since", kind: 's'}, fl{name: "json", kind: 'b'}), read: true, run: (*App).cmdPRs},
+			fl{name: "since", kind: 's'}, fl{name: "json", kind: 'b'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdPRs},
 		"pr show":  {fls: one(freshFl()), npos: 1, read: true, run: (*App).cmdPRShow},
-		"frontier": {fls: one(repoFl(), freshFl(), fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}), read: true, run: (*App).cmdFrontier},
+		"frontier": {fls: one(repoFl(), freshFl(), fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdFrontier},
 		"claim": {fls: one(fl{name: "agent", kind: 's', req: true}, fl{name: "ttl", kind: 's', def: "120m"}, fl{name: "pid", kind: 's', def: "0"}),
 			npos: 1, run: (*App).cmdClaim},
 		"release": {fls: one(fl{name: "agent", kind: 's'}, fl{name: "force", kind: 'b'}), npos: 1, run: (*App).cmdRelease},
-		"claims":  {fls: one(freshFl()), read: true, run: (*App).cmdClaims},
-		"status":  {run: (*App).cmdStatus},
+		"claims":  {fls: one(freshFl()).with(fmtFls()), read: true, run: (*App).cmdClaims},
+		"status":  {fls: fmtFls(), run: (*App).cmdStatus},
 		"new": {fls: cat(one(fl{name: "repo", kind: 's', req: true}, fl{name: "title", kind: 's', req: true}, fl{name: "label", kind: 'a'},
 			fl{name: "milestone", kind: 's'}, fl{name: "now", kind: 'b'}), bodyFls()), run: (*App).cmdNew},
 		"comment": {fls: bodyFls(), npos: 1, run: func(a *App, o *Opts) error { return a.cmdSimple("comment")(o) }},
@@ -86,9 +104,75 @@ commands:
   comment|close|reopen|label|milestone|edit <ref> ...
   push [--repo R]   pull [--repo R] [--full]   sync [--repo R] [--quiet]   prune [--repo R]
 
+Reading commands (ls frontier prs claims status milestones show) also take:
+  --format auto|table|tsv|json   auto = table on a terminal, tab-separated when piped
+  --no-color                     (colour is also off when NO_COLOR is set)
+  --sort number|updated|created|title  [--reverse]  --limit N     (ls, frontier, prs; limit 0 = all)
+
+Short flags (the same in every command that has the long one; they combine: -rl5, -s up, -l5, --limit=5):
+  -s --sort      -l --limit      -r --reverse    -f --format (-j = json, -t = tsv)
+  -L --label     -m --milestone  -S --state      -R --repo   -a --agent
+  -q --query     -n --no-color   -h --help
+  --sort values may be abbreviated (-s up = updated); "moon issues ls 10" shows 10 rows.
+
+moon issues <command> --help shows the options and two examples for that command.
 Refs: <alias>#123, or <alias>#L-<id> for a local issue not pushed yet.
-Aliases come from [repos.<alias>] in moon.toml. Env: ISSUES_NO_AUTOSYNC, ISSUES_KEEP_DAYS, ISSUES_GH.
+Aliases come from [repos.<alias>] in moon.toml. Env: ISSUES_NO_AUTOSYNC, ISSUES_KEEP_DAYS, ISSUES_GH, NO_COLOR.
 `
+
+// shortMap is the one set of short flags, the same in every command that has the flag. -j and -t are
+// shortcuts for --format json / --format tsv. A command that does not have the long flag does not get the short one.
+var shortMap = map[string]string{"s": "sort", "l": "limit", "r": "reverse", "f": "format", "L": "label", "m": "milestone",
+	"S": "state", "R": "repo", "a": "agent", "n": "no-color"}
+
+// shortKey is the single letter that selects f in this command ("" if none).
+func (f fl) shortKey() string {
+	if f.short != "" {
+		return f.short
+	}
+	for k, v := range shortMap {
+		if v == f.name {
+			return k
+		}
+	}
+	return ""
+}
+
+func uniquePrefix(val string, choices []string) (string, bool) {
+	hit := ""
+	for _, c := range choices {
+		if strings.HasPrefix(c, val) {
+			if hit != "" {
+				return "", false
+			}
+			hit = c
+		}
+	}
+	return hit, hit != "" && val != ""
+}
+
+func shortHint(c string, byName map[string]*fl) string {
+	if sw := strings.ToLower(c); sw != c && byName["-"+sw] != nil {
+		return fmt.Sprintf(", did you mean -%s (--%s)?", sw, byName["-"+sw].name)
+	}
+	if sw := strings.ToUpper(c); sw != c && byName["-"+sw] != nil {
+		return fmt.Sprintf(", did you mean -%s (--%s)?", sw, byName["-"+sw].name)
+	}
+	var names []string
+	for k, f := range byName {
+		if len(k) == 2 && k[1] != 'h' {
+			if strings.HasPrefix(f.name, strings.ToLower(c)) {
+				return fmt.Sprintf(", did you mean %s (--%s)?", k, f.name)
+			}
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return ", short flags here: " + strings.Join(names, " ")
+}
 
 func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, error) {
 	o := &Opts{S: map[string]string{}, L: map[string][]string{}, B: map[string]bool{}, Seen: map[string]bool{}}
@@ -96,8 +180,11 @@ func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, e
 	for i := range sp.fls {
 		f := &sp.fls[i]
 		byName["--"+f.name] = f
-		if f.short != "" {
-			byName["-"+f.short] = f
+		if k := f.shortKey(); k != "" {
+			byName["-"+k] = f
+		}
+		if f.name == "q" {
+			byName["--query"] = f
 		}
 		if f.def != "" {
 			o.S[f.name] = f.def
@@ -106,16 +193,86 @@ func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, e
 	bad := func(format string, a ...any) error {
 		return die("usage: moon issues %s [options]\nmoon issues %s: error: %s", name, name, fmt.Sprintf(format, a...))
 	}
+	// set stores one value for f, applying choices (unique prefixes allowed) and the --limit check.
+	set := func(f *fl, val string) error {
+		choices := f.choices
+		if f.name == "repo" {
+			choices = aliases
+		} else if len(choices) > 0 && !contains(choices, val) {
+			if full, ok := uniquePrefix(val, choices); ok {
+				val = full
+			}
+		}
+		if len(choices) > 0 && !contains(choices, val) {
+			return bad("argument --%s: invalid choice: '%s' (choose from %s)", f.name, val, strings.Join(choices, ", "))
+		}
+		if f.name == "limit" {
+			if n, err := strconv.Atoi(val); err != nil || n < 0 {
+				return bad("argument --limit: expected a number >= 0 (0 shows everything), got '%s'", val)
+			}
+		}
+		o.Seen[f.name] = true
+		if f.kind == 'a' {
+			o.L[f.name] = append(o.L[f.name], val)
+		} else {
+			o.S[f.name] = val
+		}
+		return nil
+	}
+	formatFl := byName["--format"]
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
 			o.Pos = append(o.Pos, arg)
 			continue
 		}
+		if !strings.HasPrefix(arg, "--") { // short flags, possibly combined: -rl5  -s up  -l=5
+			cl := arg[1:]
+			for j := 0; j < len(cl); {
+				c := cl[j : j+1]
+				j++
+				if (c == "j" || c == "t") && formatFl != nil {
+					if err := set(formatFl, map[string]string{"j": "json", "t": "tsv"}[c]); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				f := byName["-"+c]
+				if f == nil {
+					return nil, bad("unknown flag -%s%s; see moon issues %s --help", c, shortHint(c, byName), name)
+				}
+				if f.kind == 'b' {
+					o.B[f.name] = true
+					o.Seen[f.name] = true
+					continue
+				}
+				val := strings.TrimPrefix(cl[j:], "=")
+				if cl[j:] == "" {
+					if i+1 >= len(args) {
+						return nil, bad("argument -%s (--%s): expected one argument", c, f.name)
+					}
+					i++
+					val = args[i]
+				}
+				if err := set(f, val); err != nil {
+					return nil, err
+				}
+				break
+			}
+			continue
+		}
 		key, val, hasVal := strings.Cut(arg, "=")
 		f := byName[key]
 		if f == nil {
-			return nil, bad("unrecognized arguments: %s", arg)
+			var names []string
+			for k := range byName {
+				names = append(names, k)
+			}
+			hint := ""
+			if c := closest(key, names); c != "" {
+				hint = " (did you mean " + c + "?)"
+			}
+			return nil, bad("unrecognized arguments: %s%s; see moon issues %s --help", arg, hint, name)
 		}
 		if f.kind == 'b' {
 			o.B[f.name] = true
@@ -129,18 +286,17 @@ func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, e
 			i++
 			val = args[i]
 		}
-		choices := f.choices
-		if f.name == "repo" {
-			choices = aliases
+		if err := set(f, val); err != nil {
+			return nil, err
 		}
-		if len(choices) > 0 && !contains(choices, val) {
-			return nil, bad("argument --%s: invalid choice: '%s' (choose from %s)", f.name, val, strings.Join(choices, ", "))
-		}
-		o.Seen[f.name] = true
-		if f.kind == 'a' {
-			o.L[f.name] = append(o.L[f.name], val)
-		} else {
-			o.S[f.name] = val
+	}
+	// `moon issues ls 10`: a lone number is the limit
+	if lf := byName["--limit"]; lf != nil && sp.npos == 0 && len(o.Pos) == 1 && !o.Seen["limit"] {
+		if _, err := strconv.Atoi(o.Pos[0]); err == nil && o.Pos[0][0] != '-' {
+			if err := set(lf, o.Pos[0]); err != nil {
+				return nil, err
+			}
+			o.Pos = nil
 		}
 	}
 	for _, f := range sp.fls {
@@ -163,6 +319,9 @@ type Env struct {
 	Cwd    string
 	GH     GitHub // nil: the real gh
 	Now    func() time.Time
+	// TTY is true when Out is a terminal; Width is its column count (0 = unknown, 100 is used).
+	TTY   bool
+	Width int
 }
 
 // Main runs `moon issues <args>` and returns the exit status.
@@ -192,6 +351,21 @@ func Main(args []string, e Env) int {
 			rest = append(rest, args[i])
 		}
 	}
+	if len(rest) >= 2 && rest[0] == "help" { // moon issues help ls
+		name := rest[1]
+		if name == "pr" {
+			name = "pr show"
+		}
+		if name == "milestones" && len(rest) > 2 && rest[2] == "show" {
+			name = "milestones show"
+		}
+		if _, ok := helpTexts[name]; !ok {
+			fmt.Fprint(e.Err, unknownCommand(rest[1]))
+			return 2
+		}
+		fmt.Fprint(e.Out, cmdHelp(name))
+		return 0
+	}
 	if len(rest) == 0 || rest[0] == "-h" || rest[0] == "--help" || rest[0] == "help" {
 		fmt.Fprint(e.Out, usageText)
 		if len(rest) == 0 {
@@ -201,17 +375,28 @@ func Main(args []string, e Env) int {
 	}
 	name := rest[0]
 	rest = rest[1:]
+	if name == "milestones" && len(rest) > 0 && rest[0] == "show" {
+		name, rest = "milestones show", rest[1:]
+	}
 	if name == "pr" {
+		if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {
+			fmt.Fprint(e.Out, cmdHelp("pr show"))
+			return 0
+		}
 		if len(rest) == 0 || rest[0] != "show" {
-			fmt.Fprint(e.Err, "usage: moon issues pr show <ref>\n")
+			fmt.Fprint(e.Err, "usage: moon issues pr show <ref>   (see moon issues pr show --help)\n")
 			return 2
 		}
 		name, rest = "pr show", rest[1:]
 	}
 	sp := commands()[name]
 	if sp == nil {
-		fmt.Fprintf(e.Err, "moon issues: unknown command %q\n%s", name, usageText)
+		fmt.Fprint(e.Err, unknownCommand(name))
 		return 2
+	}
+	if helpFlagSeen(sp, rest) {
+		fmt.Fprint(e.Out, cmdHelp(name))
+		return 0
 	}
 	p, err := FindConfig(cfgPath, e.Cwd, e.Getenv)
 	if err != nil {
@@ -233,12 +418,16 @@ func Main(args []string, e Env) int {
 		gh = ExecGH{Bin: e.Getenv("ISSUES_GH")}
 	}
 	a := &App{Home: home, GH: gh, Out: e.Out, Err: e.Err, Stdin: e.Stdin, Now: e.Now, Host: host, Environ: e.Getenv,
-		Repos: cfg.Repos, SpawnSync: spawnSync}
+		Repos: cfg.Repos, SpawnSync: spawnSync, TTY: e.TTY, Width: e.Width}
+	if a.Width <= 0 {
+		a.Width = defaultWidth
+	}
 	o, err := parseOpts(sp, name, rest, a.Shorts())
 	if err != nil {
 		fmt.Fprintln(e.Err, err)
 		return 2
 	}
+	a.Color = e.TTY && e.Getenv("NO_COLOR") == "" && !o.B["no-color"]
 	if sp.read {
 		if err := a.autosync(name, o, cfgPath); err != nil {
 			fmt.Fprintln(e.Err, err)

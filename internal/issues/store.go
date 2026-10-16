@@ -38,6 +38,10 @@ type App struct {
 	// SpawnSync starts the detached background sync. Tests replace it.
 	SpawnSync func(a *App) error
 	Repos     []Repo
+	// TTY: Out is a terminal; Width its columns; Color: ANSI colours allowed. All false/0 in tests and pipes.
+	TTY   bool
+	Width int
+	Color bool
 }
 
 // exitError ends a command with a status code; Msg (if any) goes to stderr.
@@ -161,6 +165,16 @@ func (a *App) parseRef(ref string) (short, ident string, err error) {
 		if a.hasRepo(short) && validIdent(ident) {
 			return short, ident, nil
 		}
+	}
+	if a.TTY {
+		if i := strings.Index(ref, "#"); i > 0 && !a.hasRepo(ref[:i]) {
+			hint := ""
+			if c := closest(ref[:i], a.Shorts()); c != "" {
+				hint = " (did you mean " + c + "?)"
+			}
+			return "", "", die("no repo alias '%s' in '%s'%s; configured aliases: %s", ref[:i], ref, hint, strings.Join(a.Shorts(), ", "))
+		}
+		return "", "", die("bad ref '%s': want <alias>#123, for example %s#123", ref, firstOr(a.Shorts(), "app"))
 	}
 	return "", "", die("bad ref '%s' (want <alias>#123 or <alias>#L-<id>)", ref)
 }
@@ -499,6 +513,21 @@ func (a *App) holderText(c *Claim) string {
 	return fmt.Sprintf("%s (pid %s on %s, claimed %ds ago, ttl %ds)", c.Agent, pid, c.Host, int(a.nowEpoch()-c.TS), int(c.TTL))
 }
 
+// heldMsg is the exit-3 text of a refused claim. The first line is what scripts have always seen; on a
+// terminal it says who holds the issue, for how long, and what to do about it.
+func (a *App) heldMsg(ref string, c *Claim) string {
+	if !a.TTY {
+		return "TAKEN " + ref + " is held by " + a.holderText(c)
+	}
+	pid := ""
+	if c.Pid != 0 {
+		pid = fmt.Sprintf(", pid %d", c.Pid)
+	}
+	left := int(c.TTL - (a.nowEpoch() - c.TS))
+	return fmt.Sprintf("%s is already claimed by %s (on %s%s) for %s; the claim expires in %s.\nWait, pick another issue (moon issues frontier), or ask %s to run: moon issues release %s --agent %s",
+		ref, c.Agent, c.Host, pid, humanDur(int(a.nowEpoch()-c.TS)), humanDur(left), c.Agent, ref, c.Agent)
+}
+
 func (a *App) releaseClaim(ref, agent string, force bool) string {
 	p, err := a.claimPath(ref)
 	if err != nil {
@@ -526,3 +555,10 @@ func createExcl(path, body string) error {
 }
 
 var _ = bytes.NewBuffer
+
+func firstOr(l []string, d string) string {
+	if len(l) > 0 {
+		return l[0]
+	}
+	return d
+}
