@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/your-moon/moon/internal/issues"
 	"github.com/your-moon/moon/internal/tui"
 )
@@ -18,16 +20,19 @@ const usage = `usage: moon <command> [args]
 
 commands:
   tui       interactive terminal dashboard: issues, claims (press ? inside for keys)
-  issues    local-first mirror of GitHub issues and pull requests (moon issues help)
+  issues    local-first mirror of GitHub issues and pull requests (moon help issues)
   version   print the version
-  help      print this text
+  help      print this text, or: moon help <tool>
 `
 
 func main() {
 	cwd, _ := os.Getwd()
-	os.Exit(run(os.Args[1:], issues.Env{
-		Getenv: os.Getenv, Stdin: os.Stdin, Out: os.Stdout, Err: os.Stderr, Cwd: cwd,
-	}))
+	e := issues.Env{Getenv: os.Getenv, Stdin: os.Stdin, Out: os.Stdout, Err: os.Stderr, Cwd: cwd}
+	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
+		e.TTY = true
+		e.Width, _, _ = term.GetSize(fd) // 0 on failure: the table code falls back to 100
+	}
+	os.Exit(run(os.Args[1:], e))
 }
 
 func run(args []string, e issues.Env) int {
@@ -47,10 +52,17 @@ func run(args []string, e issues.Env) int {
 		fmt.Fprintln(e.Out, "moon", version)
 		return 0
 	case "help", "-h", "--help":
+		if len(args) > 1 && args[0] == "help" {
+			if args[1] == "issues" {
+				return issues.Main(append([]string{"help"}, args[2:]...), e)
+			}
+			fmt.Fprintf(e.Err, "moon: no tool named %q%s\n", args[1], didYouMean(args[1]))
+			return 2
+		}
 		fmt.Fprint(e.Out, usage)
 		return 0
 	}
-	fmt.Fprintf(e.Err, "moon: unknown command %q\n\n", args[0])
+	fmt.Fprintf(e.Err, "moon: unknown command %q%s\n\n", args[0], didYouMean(args[0]))
 	io.WriteString(e.Err, usage)
 	return 2
 }
@@ -76,4 +88,11 @@ func issuesTUIArgs(args []string) ([]string, bool) {
 		}
 	}
 	return nil, false
+}
+
+func didYouMean(word string) string {
+	if c := issues.Closest(word, []string{"issues", "tui", "version", "help"}); c != "" {
+		return fmt.Sprintf(" (did you mean %s?)", c)
+	}
+	return ""
 }

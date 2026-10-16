@@ -48,6 +48,8 @@ type env struct {
 	now   time.Time
 	extra map[string]string
 	tick  bool
+	tty   bool // pretend stdout is a terminal
+	width int
 }
 
 func newEnv(t *testing.T) *env {
@@ -71,7 +73,7 @@ func (e *env) runIn(stdin string, args ...string) (string, string, int) {
 	code := Main(append([]string{"--config", e.cfg}, args...), Env{
 		Getenv: func(k string) string { return e.extra[k] },
 		Stdin:  strings.NewReader(stdin), Out: &out, Err: &errb, Cwd: filepath.Dir(e.cfg), GH: e.gh,
-		Now: func() time.Time { return e.now },
+		Now: func() time.Time { return e.now }, TTY: e.tty, Width: e.width,
 	})
 	return out.String(), errb.String(), code
 }

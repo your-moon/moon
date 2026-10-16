@@ -2,6 +2,7 @@ package issues
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,7 +28,13 @@ func (a *App) shortsFor(o *Opts) []string {
 	return a.Shorts()
 }
 
-type row struct{ ref, line string }
+type row struct {
+	ref, line                       string
+	num                             int // issue number; local not-yet-pushed issues sort as newest
+	state, milestone, labels, title string
+	updated                         string
+	local                           bool
+}
 
 func (a *App) collect(o *Opts, state, q string) []row {
 	q = strings.ToLower(q)
@@ -48,7 +55,9 @@ func (a *App) collect(o *Opts, state, q string) []row {
 			if q != "" && !strings.Contains(strings.ToLower(title), q) && !strings.Contains(strings.ToLower(labels), q) {
 				continue
 			}
-			out = append(out, row{short + "#" + num, short + "#" + num + "\t" + st + "\t" + orDash(rms) + "\t" + orDash(labels) + "\t" + title})
+			n, _ := strconv.Atoi(num)
+			out = append(out, row{ref: short + "#" + num, line: short + "#" + num + "\t" + st + "\t" + orDash(rms) + "\t" + orDash(labels) + "\t" + title,
+				num: n, state: st, milestone: rms, labels: labels, title: title, updated: r[4]})
 		}
 		var pend []*Op
 		for _, op := range a.loadOutbox() {
@@ -76,7 +85,9 @@ func (a *App) collect(o *Opts, state, q string) []row {
 			if q != "" && !strings.Contains(strings.ToLower(title), q) {
 				continue
 			}
-			out = append(out, row{op.Ref, op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)\tlocal"})
+			out = append(out, row{ref: op.Ref, line: op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)\tlocal",
+				num: math.MaxInt32, state: "open", milestone: tm, labels: strings.Join(labels, ","), title: title + " (pending sync)",
+				updated: a.Now().UTC().Format("2006-01-02T15:04:05Z"), local: true})
 		}
 	}
 	return out
@@ -99,23 +110,23 @@ func orDash(s string) string {
 }
 
 func (a *App) cmdLs(o *Opts) error {
-	var ls []string
-	for _, r := range a.collect(o, o.str("state"), o.str("q")) {
-		ls = append(ls, r.line)
+	if err := a.resolveMilestone(o); err != nil {
+		return err
 	}
-	a.println(strings.Join(ls, "\n"))
-	return nil
+	return a.listRows(o, a.collect(o, o.str("state"), o.str("q")))
 }
 
 func (a *App) cmdFrontier(o *Opts) error {
-	var ls []string
+	if err := a.resolveMilestone(o); err != nil {
+		return err
+	}
+	var rows []row
 	for _, r := range a.collect(o, "open", "") {
 		if st, _ := a.claimStatus(r.ref); st != "fresh" {
-			ls = append(ls, r.line)
+			rows = append(rows, r)
 		}
 	}
-	a.println(strings.Join(ls, "\n"))
-	return nil
+	return a.listRows(o, rows)
 }
 
 type eff struct {
@@ -201,6 +212,11 @@ func (a *App) cmdShow(o *Opts) error {
 	if err != nil {
 		return err
 	}
+	v := a.resolveView(o, false)
+	if v.format == "json" {
+		return die("show has no json format; read the file under %s/%s/ or use `moon issues prs --json` for pull requests", a.Home, short)
+	}
+	pretty := v.format == "table"
 	ops := a.loadOutbox()
 	nowNote := ""
 	if isLocalIdent(ident) {
@@ -227,14 +243,15 @@ func (a *App) cmdShow(o *Opts) error {
 		}
 	}
 	st, cl := a.claimStatus(ref)
+	claim := "none"
 	if cl != nil {
-		s := a.holderText(cl)
+		claim = a.holderText(cl)
 		if st == "stale" {
-			s += "  [STALE]"
+			claim += "  [STALE]"
 		}
-		a.printf("claim: %s\n", s)
-	} else {
-		a.printf("claim: none\n")
+	}
+	if !pretty || isLocalIdent(ident) {
+		a.printf("claim: %s\n", claim)
 	}
 	a.printf("%s", nowNote)
 	if isLocalIdent(ident) {
@@ -277,6 +294,12 @@ func (a *App) cmdShow(o *Opts) error {
 				}
 			}
 			if !found {
+				if a.TTY {
+					if m := a.noMirror([]string{short}); len(m) > 0 {
+						return die1("no mirror yet for %s; run moon issues pull", short)
+					}
+					return die1("no issue %s in the mirror; run moon issues pull", ref)
+				}
 				return die1("%s not in the local mirror (run: issues.py pull --repo %s)", ref, short)
 			}
 			n, err := a.fetchIssueLive(short, ident)
@@ -301,13 +324,23 @@ func (a *App) cmdShow(o *Opts) error {
 		}
 		e := &eff{title: hStr(h, "title"), state: hStr(h, "state"), labels: hList(h, "labels"), milestone: hStr(h, "milestone")}
 		applyOps(e, pending)
-		if len(pending) > 0 {
+		if pretty {
+			if len(pending) > 0 {
+				e.title += " (pending sync)"
+			}
+			a.showPretty(ref, e, h, text, claim)
+			if live {
+				a.printf("\n"+liveNote+"\n", a.keepDays())
+			}
+		} else if len(pending) > 0 {
 			a.printf("PENDING SYNC: %d local op(s) not on GitHub yet; effective state: %s | labels: %s | milestone: %s | title: %s (pending sync)\n\n",
 				len(pending), e.state, orDash(strings.Join(e.labels, ",")), orDash(e.milestone), e.title)
 		}
-		a.println(strings.TrimRight(text, "\n"))
-		if live {
-			a.printf("\n"+liveNote+"\n", a.keepDays())
+		if !pretty {
+			a.println(strings.TrimRight(text, "\n"))
+			if live {
+				a.printf("\n"+liveNote+"\n", a.keepDays())
+			}
 		}
 	}
 	if len(pending) > 0 {
@@ -325,25 +358,6 @@ func (a *App) cmdShow(o *Opts) error {
 	return nil
 }
 
-func (a *App) cmdMilestones(o *Opts) error {
-	for _, short := range a.shortsFor(o) {
-		if a.localOnly(short) {
-			for _, line := range a.localMilestones(short) {
-				a.printf("%s\t%s\n", short, line)
-			}
-			continue
-		}
-		s, err := readText(filepath.Join(a.Home, short, "milestones.tsv"))
-		if err != nil {
-			continue
-		}
-		for _, line := range splitLines(s) {
-			a.printf("%s\t%s\n", short, line)
-		}
-	}
-	return nil
-}
-
 // splitLines mimics iterating a text file: no trailing empty element.
 func splitLines(s string) []string {
 	if s == "" {
@@ -353,6 +367,7 @@ func splitLines(s string) []string {
 }
 
 func (a *App) cmdStatus(o *Opts) error {
+	v := a.resolveView(o, false)
 	ops := a.loadOutbox()
 	errs := 0
 	for _, op := range ops {
@@ -360,24 +375,82 @@ func (a *App) cmdStatus(o *Opts) error {
 			errs++
 		}
 	}
-	a.printf("outbox=%d errors=%d\n", len(ops), errs)
-	for _, op := range ops {
-		if op.LastError != nil && *op.LastError != "" {
-			a.printf("  ERR %s %s %s attempts=%d: %s\n", op.OpID, op.Op, op.Ref, op.Attempts, trunc(*op.LastError, 200))
-		}
+	type repoStat struct {
+		short  string
+		ago    int
+		pulled bool
+		n      int
+		local  bool
 	}
+	var stats []repoStat
 	for _, short := range a.Shorts() {
 		if a.localOnly(short) {
-			a.printf("%s: local-only, issues=%d\n", short, len(a.readIndex(short)))
+			stats = append(stats, repoStat{short: short, n: len(a.readIndex(short)), local: true})
 			continue
 		}
 		s, err := readText(filepath.Join(a.Home, short, "lastpull"))
 		t, perr := strconv.Atoi(pyStrip(s))
 		if err != nil || perr != nil {
-			a.printf("%s: never pulled\n", short)
+			stats = append(stats, repoStat{short: short})
 			continue
 		}
-		a.printf("%s: last pull %ds ago, issues=%d\n", short, int(a.Now().Unix())-t, len(a.readIndex(short)))
+		stats = append(stats, repoStat{short: short, ago: int(a.Now().Unix()) - t, pulled: true, n: len(a.readIndex(short))})
+	}
+	switch v.format {
+	case "json":
+		rs := []any{}
+		for _, r := range stats {
+			var ago any
+			if r.pulled {
+				ago = r.ago
+			}
+			rs = append(rs, Obj{{"repo", r.short}, {"last_pull_seconds", ago}, {"issues", r.n}, {"local_only", r.local}})
+		}
+		e := []any{}
+		for _, op := range ops {
+			if op.LastError != nil && *op.LastError != "" {
+				e = append(e, Obj{{"op_id", op.OpID}, {"op", op.Op}, {"ref", op.Ref}, {"attempts", op.Attempts}, {"error", *op.LastError}})
+			}
+		}
+		a.println(dumps(Obj{{"outbox", len(ops)}, {"errors", errs}, {"error_ops", e}, {"repos", rs}}, false))
+	case "table":
+		c := paint(a.Color, cGreen, "0 errors")
+		if errs > 0 {
+			c = paint(a.Color, cRed, fmt.Sprintf("%d errors", errs))
+		}
+		a.printf("outbox: %d queued, %s\n", len(ops), c)
+		for _, op := range ops {
+			if op.LastError != nil && *op.LastError != "" {
+				a.println("  " + paint(a.Color, cRed, "ERR") + fmt.Sprintf(" %s %s %s (attempts %d): %s", op.OpID, op.Op, op.Ref, op.Attempts, ellipsize(*op.LastError, max(a.Width-40, 20))))
+			}
+		}
+		for _, r := range stats {
+			if r.local {
+				a.printf("%s: local-only, %d issues\n", r.short, r.n)
+			} else if !r.pulled {
+				a.printf("%s: %s, run moon issues pull\n", r.short, paint(a.Color, cYellow, "never pulled"))
+			} else {
+				a.printf("%s: last pull %s ago, %d issues\n", r.short, humanDur(r.ago), r.n)
+			}
+		}
+	default:
+		a.printf("outbox=%d errors=%d\n", len(ops), errs)
+		for _, op := range ops {
+			if op.LastError != nil && *op.LastError != "" {
+				a.printf("  ERR %s %s %s attempts=%d: %s\n", op.OpID, op.Op, op.Ref, op.Attempts, trunc(*op.LastError, 200))
+			}
+		}
+		for _, r := range stats {
+			if r.local {
+				a.printf("%s: local-only, issues=%d\n", r.short, r.n)
+				continue
+			}
+			if !r.pulled {
+				a.printf("%s: never pulled\n", r.short)
+				continue
+			}
+			a.printf("%s: last pull %ds ago, issues=%d\n", r.short, r.ago, r.n)
+		}
 	}
 	return nil
 }
@@ -416,29 +489,21 @@ func (a *App) prRows(o *Opts) []prItem {
 	return out
 }
 
-func (a *App) cmdPRs(o *Opts) error {
-	rows := a.prRows(o)
-	if o.B["json"] {
-		l := []any{}
-		for _, it := range rows {
-			r := it.row
-			n, _ := strconv.Atoi(r.Number)
-			l = append(l, Obj{{"number", r.Number}, {"state", r.State}, {"draft", r.Draft == "1"}, {"head_ref", r.HeadRef}, {"head_oid", r.HeadOid},
-				{"base_ref", r.BaseRef}, {"created_at", r.CreatedAt}, {"merged_at", r.MergedAt}, {"merge_commit", r.MergeCommit}, {"author", r.Author},
-				{"updated_at", r.UpdatedAt}, {"closes", r.closesList()}, {"title", r.Title}, {"ref", it.short + "#" + r.Number}, {"repo", it.short},
-				{"url", "https://github.com/" + a.repoFull(it.short) + "/pull/" + strconv.Itoa(n)}})
-		}
-		a.println(dumps(l, false))
-		return nil
-	}
+func (a *App) prJSON(rows []prItem) []any {
+	l := []any{}
 	for _, it := range rows {
 		r := it.row
-		d := ""
-		if r.Draft == "1" {
-			d = " [draft]"
-		}
-		a.printf("%s#%s\t%s%s\t%s\t%s\n", it.short, r.Number, r.State, d, r.HeadRef, r.Title)
+		n, _ := strconv.Atoi(r.Number)
+		l = append(l, Obj{{"number", r.Number}, {"state", r.State}, {"draft", r.Draft == "1"}, {"head_ref", r.HeadRef}, {"head_oid", r.HeadOid},
+			{"base_ref", r.BaseRef}, {"created_at", r.CreatedAt}, {"merged_at", r.MergedAt}, {"merge_commit", r.MergeCommit}, {"author", r.Author},
+			{"updated_at", r.UpdatedAt}, {"closes", r.closesList()}, {"title", r.Title}, {"ref", it.short + "#" + r.Number}, {"repo", it.short},
+			{"url", "https://github.com/" + a.repoFull(it.short) + "/pull/" + strconv.Itoa(n)}})
 	}
+	return l
+}
+
+func (a *App) cmdPRs(o *Opts) error {
+	a.printPRs(o, a.prRows(o))
 	return nil
 }
 
@@ -474,6 +539,12 @@ func (a *App) cmdPRShow(o *Opts) error {
 		a.printf("%s\n\n"+liveNote+"\n", strings.TrimRight(renderPR(pr, prRowOf(pr)), "\n"), a.keepDays())
 		return nil
 	}
+	if a.TTY {
+		if m := a.noMirror([]string{short}); len(m) > 0 {
+			return die1("no mirror yet for %s; run moon issues pull", short)
+		}
+		return die1("no pull request %s in the mirror; run moon issues pull (PRs older than the first pull need --full)", ref)
+	}
 	return die1("%s not in the PR mirror (run: issues.py pull --repo %s; PRs older than the first pull need --full)", ref, short)
 }
 
@@ -484,6 +555,7 @@ func (a *App) cmdClaims(o *Opts) error {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
+	var rows [][]string
 	for _, n := range names {
 		if !strings.HasSuffix(n, ".json") {
 			continue
@@ -500,8 +572,22 @@ func (a *App) cmdClaims(o *Opts) error {
 		if c.Pid != 0 {
 			pid = strconv.Itoa(c.Pid)
 		}
-		a.printf("%s\t%s\t%s\t%s\tpid=%s\tage=%ds\tttl=%ds\n", strings.Replace(strings.TrimSuffix(n, ".json"), "-", "#", 1), st, c.Agent, c.Host, pid, int(a.nowEpoch()-c.TS), int(c.TTL))
+		rows = append(rows, []string{strings.Replace(strings.TrimSuffix(n, ".json"), "-", "#", 1), st, c.Agent, c.Host, pid,
+			strconv.Itoa(int(a.nowEpoch() - c.TS)), strconv.Itoa(int(c.TTL))})
 	}
+	v := a.resolveView(o, false)
+	js := []any{}
+	for _, r := range rows {
+		age, _ := strconv.Atoi(r[5])
+		ttl, _ := strconv.Atoi(r[6])
+		js = append(js, Obj{{"ref", r[0]}, {"state", strings.ToLower(r[1])}, {"agent", r[2]}, {"host", r[3]}, {"pid", r[4]}, {"age_seconds", age}, {"ttl_seconds", ttl}})
+	}
+	if v.format == "table" {
+		for i := range rows {
+			rows[i] = humanClaimRow(rows[i])
+		}
+	}
+	a.claimsTable(rows, js, o)
 	return nil
 }
 

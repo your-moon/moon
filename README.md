@@ -28,6 +28,45 @@ Put a `moon.toml` in that last place to run `moon issues` from any directory.
 Each `[repos.<alias>]` declares one repository (`github = "owner/name"`, alias is lowercase `[a-z0-9_]+`); refs look like
 `<alias>#123`. The optional top-level `mirror_dir = "path"` (default `.moon/issues` beside `moon.toml`) holds the mirror.
 
+## Using it day to day
+
+On a terminal, the reading commands print an aligned table with colours; piped or redirected they print the same
+tab-separated text as always, so scripts and agents are unaffected. `--format table|tsv|json` forces one, `--no-color`
+(or `NO_COLOR=1`) turns colours off, and `moon issues <command> --help` shows two examples per command.
+
+    moon issues ls -s up -l 10                   # what changed lately (30 rows by default on a terminal)
+    moon issues ls 10                            # same limit, shortest form
+    moon issues frontier -L kind:bug             # open issues nobody has claimed
+    moon issues show app#12                      # one issue, body wrapped to the terminal
+    moon issues milestones                       # progress of the open milestones
+    moon issues milestones show v1.0             # one milestone and its issues
+    moon issues prs -S all                       # pull requests
+
+Every flag has a short form, the same in every command: `-s --sort`, `-l --limit`, `-r --reverse`, `-f --format`
+(`-j` = json, `-t` = tsv), `-L --label`, `-m --milestone`, `-S --state`, `-R --repo`, `-a --agent`, `-q --query`,
+`-n --no-color`, `-h --help`. They combine (`-rl5`), take `-l5`, `-l 5` or `--limit=5`, and `--sort` values can be
+abbreviated (`-s up` is `updated`). The long forms keep working.
+
+A sample of `moon issues ls`:
+
+    REF     STATE   CLAIM  LABELS             TITLE
+    app#12  open    -      bug,area:ui        login: button does nothing on Safari when the session coo…
+    app#9   open    alice  feature            export: add CSV download
+    app#8   open    -      cleanup,area:docs  docs: quickstart mentions a removed flag
+    app#5   closed  -      bug                search: slow on big projects
+    showing 4 of 4
+
+and of `moon issues milestones` (the footer goes to stderr, so pipes stay clean; ASCII bars when colour is off):
+
+    TITLE  PROGRESS          CLOSED/TOTAL  PCT  OPEN  DUE
+    v1.0   ██████░░░░░░░░░░  3/7           42%  4     2026-04-01
+    v1.1   ████████░░░░░░░░  1/2           50%  1     -
+    showing 2 of 2
+
+Sorting: `--sort number|updated|created|title` (`-s`) and `-r` on `ls`, `frontier` and `prs` (milestones take
+`due|progress|title|open`). Percentages round down, so 99.6% reads 99 and only a finished milestone shows 100.
+`--milestone` accepts a case-insensitive title or a unique prefix. A typo gets "did you mean ...".
+
 ## Commands
 
 `ls show milestones prs pr show frontier claim release claims status new comment close reopen label milestone edit push pull sync prune`,

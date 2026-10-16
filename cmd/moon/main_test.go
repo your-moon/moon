@@ -62,3 +62,21 @@ func TestIssuesTUIArgs(t *testing.T) {
 		t.Errorf("help does not list tui: %q", o)
 	}
 }
+
+func TestHelpAndTypos(t *testing.T) {
+	// help needs no moon.toml (Cwd is /nonexistent in runArgs)
+	for _, a := range [][]string{{"issues", "ls", "--help"}, {"issues", "ls", "-h"}, {"issues", "help", "ls"}, {"help", "issues", "ls"}, {"issues", "milestones", "show", "--help"}} {
+		if c, o, e := runArgs(a...); c != 0 || e != "" || !strings.Contains(o, "examples:") {
+			t.Errorf("%v: %d %q %q", a, c, o, e)
+		}
+	}
+	if c, _, e := runArgs("isues"); c != 2 || !strings.Contains(e, "did you mean issues?") {
+		t.Errorf("isues: %d %q", c, e)
+	}
+	if c, _, e := runArgs("help", "isues"); c != 2 || !strings.Contains(e, "did you mean issues?") {
+		t.Errorf("help isues: %d %q", c, e)
+	}
+	if c, _, e := runArgs("issues", "lst"); c != 2 || !strings.Contains(e, "did you mean ls?") {
+		t.Errorf("issues lst: %d %q", c, e)
+	}
+}

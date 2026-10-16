@@ -1,0 +1,6 @@
+REF     STATE       BRANCH      TITLE
+app#31  open        fix-login   login: handle expired cookie
+app#30  merged      csv-export  export: CSV download
+app#29  open draft  wip-search  search: index tuning
+--- stderr ---
+showing 3 of 3

@@ -572,7 +572,7 @@ func (a *App) cmdClaim(o *Opts) error {
 			return nil
 		}
 		if !a.claimIsStale(cur) {
-			return taken("TAKEN %s is held by %s", ref, a.holderText(cur))
+			return taken("%s", a.heldMsg(ref, cur))
 		}
 		// stale: exactly one taker wins the rename, then races everyone else on O_EXCL
 		gone := path + ".stale." + strings.ReplaceAll(uuid4(), "-", "")
@@ -583,7 +583,7 @@ func (a *App) cmdClaim(o *Opts) error {
 		os.Remove(gone)
 		if moved != nil && !a.claimIsStale(moved) { // we renamed a fresh claim that replaced the stale one
 			createExcl(path, moved.marshal()+"\n")
-			return taken("TAKEN %s is held by %s", ref, a.holderText(moved))
+			return taken("%s", a.heldMsg(ref, moved))
 		}
 		if err := createExcl(path, body+"\n"); err != nil {
 			return taken("TAKEN %s was just taken by someone else", ref)
