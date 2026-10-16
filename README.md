@@ -22,7 +22,9 @@ or download a release binary and put it on your `PATH`. You also need the [`gh`]
     moon issues claim app#12 --agent me   # local claim; exit 3 if someone else holds it
     moon issues comment app#12 --body "on it"; moon issues sync
 
-`moon.toml` is found by walking up from the current directory, or via `--config FILE` / `$MOON_CONFIG`.
+Config lookup, first hit wins: `--config FILE`, `$MOON_CONFIG`, then `moon.toml` (or `.moon/moon.toml`) walking up
+from the current directory, then `$XDG_CONFIG_HOME/moon/moon.toml` (default `~/.config/moon/moon.toml`).
+Put a `moon.toml` in that last place to run `moon issues` from any directory.
 Each `[repos.<alias>]` declares one repository (`github = "owner/name"`, alias is lowercase `[a-z0-9_]+`); refs look like
 `<alias>#123`. The optional top-level `mirror_dir = "path"` (default `.moon/issues` beside `moon.toml`) holds the mirror.
 

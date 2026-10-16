@@ -76,7 +76,7 @@ func TestConfig(t *testing.T) {
 	}
 	sub := filepath.Join(d, "a", "b")
 	os.MkdirAll(sub, 0o755)
-	got, err := FindConfig("", "", sub)
+	got, err := FindConfig("", sub, func(string) string { return "" })
 	if err != nil || got != p {
 		t.Fatalf("walk up: %q %v", got, err)
 	}
@@ -428,4 +428,103 @@ func TestAutosyncSpawnsOnceWhenStale(t *testing.T) {
 	e.now = time.Unix(1772366400+60, 0)
 	_, errs, _ = e.run("ls")
 	eq(t, "fresh", errs, "")
+}
+
+func TestFindConfigOrder(t *testing.T) {
+	mk := func(p string) string {
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("[repos.a]\ngithub = \"o/a\"\n"), 0o644)
+		return p
+	}
+	type tc struct {
+		name                          string
+		flag, env, walk, dotmoon, xdg bool
+		useHome                       bool // XDG_CONFIG_HOME unset, file under HOME/.config
+		want                          string
+	}
+	cases := []tc{
+		{name: "flag beats all", flag: true, env: true, walk: true, dotmoon: true, xdg: true, want: "flag"},
+		{name: "env beats walk", env: true, walk: true, dotmoon: true, xdg: true, want: "env"},
+		{name: "walk beats xdg", walk: true, dotmoon: true, xdg: true, want: "walk"},
+		{name: "moon.toml beats .moon/moon.toml", walk: true, dotmoon: true, want: "walk"},
+		{name: ".moon/moon.toml beats xdg", dotmoon: true, xdg: true, want: "dotmoon"},
+		{name: "xdg last", xdg: true, want: "xdg"},
+		{name: "home default", xdg: true, useHome: true, want: "xdg"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			proj := filepath.Join(root, "proj")
+			cwd := filepath.Join(proj, "a", "b")
+			os.MkdirAll(cwd, 0o755)
+			home := filepath.Join(root, "home")
+			xdgDir := filepath.Join(root, "xdgdir")
+			paths := map[string]string{}
+			flag, env := "", ""
+			if c.flag {
+				paths["flag"] = mk(filepath.Join(root, "flag.toml"))
+				flag = paths["flag"]
+			}
+			if c.env {
+				paths["env"] = mk(filepath.Join(root, "env.toml"))
+				env = paths["env"]
+			}
+			if c.walk {
+				paths["walk"] = mk(filepath.Join(proj, "moon.toml"))
+			}
+			if c.dotmoon {
+				paths["dotmoon"] = mk(filepath.Join(proj, ".moon", "moon.toml"))
+			}
+			vars := map[string]string{"MOON_CONFIG": env, "HOME": home}
+			if c.xdg {
+				if c.useHome {
+					paths["xdg"] = mk(filepath.Join(home, ".config", "moon", "moon.toml"))
+				} else {
+					paths["xdg"] = mk(filepath.Join(xdgDir, "moon", "moon.toml"))
+					vars["XDG_CONFIG_HOME"] = xdgDir
+				}
+			}
+			got, err := FindConfig(flag, cwd, func(k string) string { return vars[k] })
+			if err != nil || got != paths[c.want] {
+				t.Fatalf("got %q %v, want %q", got, err, paths[c.want])
+			}
+		})
+	}
+}
+
+func TestFindConfigNotFound(t *testing.T) {
+	root := t.TempDir()
+	xdg := filepath.Join(root, "xdg")
+	cwd := filepath.Join(root, "work")
+	os.MkdirAll(cwd, 0o755)
+	vars := map[string]string{"XDG_CONFIG_HOME": xdg, "HOME": filepath.Join(root, "home")}
+	_, err := FindConfig("", cwd, func(k string) string { return vars[k] })
+	if err == nil {
+		t.Fatal("want error")
+	}
+	m := err.Error()
+	last := -1
+	for _, w := range []string{"--config", "$MOON_CONFIG", ".moon/moon.toml", cwd, filepath.Join(xdg, "moon", "moon.toml"), "[repos.app]", "github ="} {
+		i := strings.Index(m, w)
+		if i < 0 || i < last {
+			t.Fatalf("%q missing or out of order in:\n%s", w, m)
+		}
+		last = i
+	}
+	vars = map[string]string{}
+	_, err = FindConfig("", cwd, func(k string) string { return vars[k] })
+	if err == nil || !strings.Contains(err.Error(), "~/.config/moon/moon.toml") {
+		t.Fatalf("no-home error: %v", err)
+	}
+}
+
+func TestDotMoonMirrorDefault(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, ".moon", "moon.toml")
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	os.WriteFile(p, []byte("[repos.a]\ngithub = \"o/a\"\n"), 0o644)
+	c, err := LoadConfig(p)
+	if err != nil || c.MirrorDir != filepath.Join(d, ".moon", "issues") {
+		t.Fatalf("%+v %v", c, err)
+	}
 }

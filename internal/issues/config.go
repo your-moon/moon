@@ -25,26 +25,58 @@ type Config struct {
 var aliasRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 var githubRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// FindConfig resolves the config path: explicit flag, $MOON_CONFIG, then walk up from start.
-func FindConfig(explicit, env, start string) (string, error) {
+// FindConfig resolves the config path, first hit wins:
+//  1. explicit (--config FILE)
+//  2. $MOON_CONFIG
+//  3. moon.toml or .moon/moon.toml, walking up from start
+//  4. $XDG_CONFIG_HOME/moon/moon.toml (default ~/.config/moon/moon.toml)
+//
+// getenv supplies MOON_CONFIG, XDG_CONFIG_HOME and HOME.
+func FindConfig(explicit, start string, getenv func(string) string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
-	if env != "" {
-		return env, nil
+	if v := getenv("MOON_CONFIG"); v != "" {
+		return v, nil
 	}
-	d := start
-	for {
-		p := filepath.Join(d, "moon.toml")
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p, nil
+	isFile := func(p string) bool {
+		st, err := os.Stat(p)
+		return err == nil && !st.IsDir()
+	}
+	for d := start; ; {
+		for _, p := range []string{filepath.Join(d, "moon.toml"), filepath.Join(d, ".moon", "moon.toml")} {
+			if isFile(p) {
+				return p, nil
+			}
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
-			return "", fmt.Errorf("no moon.toml found (searched up from %s); create one or pass --config / set MOON_CONFIG", start)
+			break
 		}
 		d = parent
 	}
+	user := ""
+	if x := getenv("XDG_CONFIG_HOME"); x != "" {
+		user = filepath.Join(x, "moon", "moon.toml")
+	} else if h := getenv("HOME"); h != "" {
+		user = filepath.Join(h, ".config", "moon", "moon.toml")
+	}
+	if user != "" && isFile(user) {
+		return user, nil
+	}
+	if user == "" {
+		user = "$XDG_CONFIG_HOME/moon/moon.toml (or ~/.config/moon/moon.toml)"
+	}
+	return "", fmt.Errorf(`no moon.toml found. Searched, in order:
+  1. --config FILE (not given)
+  2. $MOON_CONFIG (not set)
+  3. moon.toml or .moon/moon.toml in %s and every parent directory
+  4. %s
+
+Create one, for example:
+  [repos.app]
+  github = "octocat/app"
+  # mirror_dir = "/path/to/mirror"   (optional)`, start, user)
 }
 
 // LoadConfig parses the small TOML subset moon needs:
@@ -134,6 +166,8 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: no [repos.<alias>] declared", path)
 	}
 	switch {
+	case mirror == "" && filepath.Base(c.Dir) == ".moon":
+		c.MirrorDir = filepath.Join(c.Dir, "issues")
 	case mirror == "":
 		c.MirrorDir = filepath.Join(c.Dir, ".moon", "issues")
 	case filepath.IsAbs(mirror):
