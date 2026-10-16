@@ -428,7 +428,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		m.dtop -= detH/2 + 1
 		m.clampDetail()
-	case "enter", "l", "right":
+	case "enter", "right":
 		if m.cur() != nil {
 			m.full, m.dtop = true, 0
 		}

@@ -1,0 +1,24 @@
+  REF    STATE  STATUS    LABELS                TITLE                   │ app#6  open
+  app#9  open   blocked   kind:bug +4           checkout: card form los…│ auth: refresh token loops
+  app#8  open   blocked   kind:feature +1       export: which CSV diale…│
+> app#6  open   working   kind:bug,area:auth    auth: refresh token loo…│ labels: kind:bug, area:auth
+  app#5  open   in review kind:feature          export: add CSV download│ milestone: v1
+  app#4  open   ready     kind:bug,triage:ready docs: explain config lo…│ author: sam
+  app#3  open   stale     -                     chore: bump the linter  │ claim: sonnet-17 on box, 11m ago
+                                                                        │ status: working: sonnet-17 11m
+                                                                        │ ──────────────────────────────────────────────
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  x close  m comment  ? help  q quit
+6/7  state:open  sort:number↓  labels:full  |  mirror pulled 5 min ago

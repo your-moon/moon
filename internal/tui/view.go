@@ -223,8 +223,12 @@ func (m Model) listPane(w, h int) []string {
 		for i, e := range m.rows {
 			texts[i] = issues.LabelsText(e.it.Labels, mode)
 		}
-		lbW = issues.LabelColWidth(texts, "LABELS", w)
-		lbW = min(lbW, max(6, w-used-10)) // the title keeps at least 10 columns when it can
+		capW := issues.LabelColWidth(texts, "LABELS", w)
+		capW = min(capW, max(6, w-used-10)) // the title keeps at least 10 columns when it can
+		lbW = lipgloss.Width("LABELS")      // as wide as the widest text that is kept, never past the cap
+		for _, e := range m.rows {
+			lbW = max(lbW, lipgloss.Width(issues.FitLabels(oneLineAll(e.it.Labels), mode, capW)))
+		}
 		used += lbW + 1
 	}
 	titleW := w - used

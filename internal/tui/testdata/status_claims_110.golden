@@ -1,0 +1,14 @@
+ 1 Issues   2 Milestones  [3 Claims]
+  REF   STATE              AGENT     HOST PID     AGE    TTL
+> app#3 stale              haiku     box  -       2h     2h
+  app#6 working            sonnet-17 box  -       11m    2h
+! app#7 done (stale claim) opus      box  -       60m    2h
+
+
+
+
+
+
+
+j/k move  r reload  q quit   ! = stale, or its issue is closed (moon issues sweep)
+3 claims, 1 stale, 1 on closed issues
