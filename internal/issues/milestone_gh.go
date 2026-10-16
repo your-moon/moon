@@ -24,11 +24,13 @@ type MilestoneChange struct {
 
 type ghRun func(args []string, stdin string, timeout time.Duration) (string, error)
 
+// dueOnJSON is the due_on GitHub is sent for a date. Not midnight: a create with T00:00:00Z comes back a day
+// early (GitHub reads it in a local zone), so the date is sent at noon UTC, which keeps it on every continent.
 func dueOnJSON(date string) any {
 	if date == "" {
 		return nil
 	}
-	return date + "T00:00:00Z"
+	return date + "T12:00:00Z"
 }
 
 type remoteMsJSON struct {

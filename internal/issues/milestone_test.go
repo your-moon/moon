@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // hub is a fake GitHub that keeps milestones and records every call that matters, in order.
@@ -102,6 +103,7 @@ func (h *hub) handle(args []string, stdin string) (string, error) {
 			}
 			m := h.seed(title, "", "")
 			h.patch(m, body)
+			h.patchDue(m, body, true)
 			if h.createLost {
 				h.createLost = false
 				return "", &GhError{Msg: "connection reset"}
@@ -112,6 +114,7 @@ func (h *hub) handle(args []string, stdin string) (string, error) {
 		for _, m := range h.ms {
 			if m.Number == n {
 				h.patch(m, body)
+				h.patchDue(m, body, false)
 				h.log = append(h.log, fmt.Sprintf("PATCH milestone %d %s", n, stdin))
 				return h.json(m), nil
 			}
@@ -162,13 +165,25 @@ func (h *hub) patch(m *hubMs, body map[string]any) {
 	if v, ok := body["state"].(string); ok {
 		m.State = v
 	}
-	if v, ok := body["due_on"]; ok {
-		if s, ok := v.(string); ok {
-			m.DueOn = &s
-		} else {
-			m.DueOn = nil
-		}
+}
+
+// patchDue is what GitHub does to due_on: it keeps the date, except that a create at midnight UTC lands on the day before.
+func (h *hub) patchDue(m *hubMs, body map[string]any, create bool) {
+	v, ok := body["due_on"]
+	if !ok {
+		return
 	}
+	s, isStr := v.(string)
+	if !isStr {
+		m.DueOn = nil
+		return
+	}
+	d, _ := time.Parse(time.RFC3339, s)
+	if create && d.Hour() == 0 {
+		d = d.AddDate(0, 0, -1)
+	}
+	out := d.Format("2006-01-02") + "T00:00:00Z"
+	m.DueOn = &out
 }
 
 func (h *hub) json(m *hubMs) string {
@@ -322,6 +337,7 @@ func TestMsCaseOnlyTitleGetsOpMarker(t *testing.T) {
 			h.mu.Lock()
 			m := h.seed(body["title"].(string), "", "")
 			h.patch(m, body)
+			h.patchDue(m, body, true)
 			h.log = append(h.log, "POST milestone "+m.Title)
 			if h.createLost {
 				h.createLost = false
