@@ -25,6 +25,7 @@ type Config struct {
 	MirrorDir string // absolute
 	Repos     []Repo // in file order
 	Colors    ColorConfig
+	ClaimTTL  string // claim_ttl = "30m": default lease for `claim` when --ttl is not given; empty means 120m
 }
 
 var aliasRe = regexp.MustCompile(`^[a-z0-9_]+$`)
@@ -87,6 +88,7 @@ Create one, for example:
 // LoadConfig parses the small TOML subset moon needs:
 //
 //	mirror_dir = "path"            # optional, default .moon/issues beside moon.toml
+//	claim_ttl = "30m"              # optional, default lease for `claim` (120m when absent)
 //	[repos.<alias>]
 //	github = "owner/name"         # exactly one of github or local = true
 //	local = true                  # local-only tracker, never synced
@@ -191,6 +193,11 @@ func LoadConfig(path string) (*Config, error) {
 		switch {
 		case cur == nil && k == "mirror_dir":
 			mirror = v
+		case cur == nil && k == "claim_ttl":
+			if !ttlRe.MatchString(v) {
+				return nil, fmt.Errorf("%s:%d: claim_ttl must look like 90s, 30m or 2h, got %q", path, n, v)
+			}
+			c.ClaimTTL = v
 		case cur != nil && k == "github":
 			if !githubRe.MatchString(v) {
 				return nil, fmt.Errorf("%s:%d: github must be owner/name, got %q", path, n, v)
