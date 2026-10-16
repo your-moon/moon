@@ -213,7 +213,7 @@ func Main(args []string, e Env) int {
 		fmt.Fprintf(e.Err, "moon issues: unknown command %q\n%s", name, usageText)
 		return 2
 	}
-	p, err := FindConfig(cfgPath, e.Getenv("MOON_CONFIG"), e.Cwd)
+	p, err := FindConfig(cfgPath, e.Cwd, e.Getenv)
 	if err != nil {
 		fmt.Fprintln(e.Err, err)
 		return 2
