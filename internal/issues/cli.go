@@ -306,6 +306,10 @@ func (a *App) autosync(name string, o *Opts, cfgPath string) error {
 		}
 		shorts = []string{s}
 	}
+	shorts, _ = a.splitLocal(shorts) // local-only aliases have nothing to refresh
+	if len(shorts) == 0 {
+		return nil
+	}
 	if o.B["fresh"] { // M_fresh
 		a.doSync(shorts, false, a.Err, "")
 		return nil

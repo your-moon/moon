@@ -178,7 +178,11 @@ func validIdent(s string) bool {
 	if allDigits {
 		return true
 	}
-	// L-<14 digits>-<4 hex>
+	// L-<n>: sequential local id
+	if rest, ok := strings.CutPrefix(s, "L-"); ok && rest != "" && isDigits(rest) {
+		return true
+	}
+	// legacy L-<14 digits>-<4 hex>, valid forever
 	if len(s) != 2+14+1+4 || !strings.HasPrefix(s, "L-") || s[16] != '-' {
 		return false
 	}
@@ -196,6 +200,45 @@ func validIdent(s string) bool {
 }
 
 func isLocalIdent(ident string) bool { return strings.HasPrefix(ident, "L-") }
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// cmpLocalIdent orders local ids: legacy timestamp ids first (by text), then L-<n> numerically,
+// so L-2 sorts before L-10.
+func cmpLocalIdent(x, y string) int {
+	nx, ox := seqOf(x)
+	ny, oy := seqOf(y)
+	switch {
+	case !ox && !oy:
+		return strings.Compare(x, y)
+	case !ox:
+		return -1
+	case !oy:
+		return 1
+	case nx < ny:
+		return -1
+	case nx > ny:
+		return 1
+	}
+	return 0
+}
+
+// seqOf returns n for the sequential form L-<n>.
+func seqOf(ident string) (int, bool) {
+	rest, ok := strings.CutPrefix(ident, "L-")
+	if !ok || !isDigits(rest) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	return n, err == nil
+}
 
 func shortOf(ref string) string {
 	i := strings.Index(ref, "#")

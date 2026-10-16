@@ -1,8 +1,6 @@
 package issues
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -285,15 +283,25 @@ func (a *App) cmdNew(o *Opts) error {
 	if err != nil {
 		return err
 	}
-	var rb [2]byte
-	rand.Read(rb[:])
-	lid := fmt.Sprintf("L-%s-%s", a.Now().Format("20060102150405"), hex.EncodeToString(rb[:]))
-	body = pyRstrip(body) + "\n\n<!-- local-id: " + lid + " -->"
 	repo := o.str("repo")
 	labels := o.L["label"]
 	if labels == nil {
 		labels = []string{}
 	}
+	if a.localOnly(repo) {
+		n, err := a.newLocalOnly(repo, o.str("title"), body, labels, o.str("milestone"))
+		if err != nil {
+			return err
+		}
+		a.printf("ref %s#%d  (#%d)\n", repo, n, n)
+		return nil
+	}
+	seq, err := a.nextLocalSeq(repo)
+	if err != nil {
+		return err
+	}
+	lid := fmt.Sprintf("L-%d", seq)
+	body = pyRstrip(body) + "\n\n<!-- local-id: " + lid + " -->"
 	args := map[string]any{"title": o.str("title"), "body": body, "labels": toAny(labels), "local_id": lid}
 	if o.Seen["milestone"] {
 		args["milestone"] = o.str("milestone")
@@ -383,9 +391,18 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 				return die("edit needs --title and/or --body")
 			}
 		}
-		opID, ref, err := a.enqueue(kind, o.Pos[0], args)
-		if err != nil {
-			return err
+		var opID, ref string
+		if short, _, perr := a.parseRef(o.Pos[0]); perr == nil && a.localOnly(short) {
+			if err := a.applyLocalOnly(kind, o.Pos[0], args); err != nil {
+				return err
+			}
+			opID, ref = "local", o.Pos[0]
+		} else {
+			var err error
+			opID, ref, err = a.enqueue(kind, o.Pos[0], args)
+			if err != nil {
+				return err
+			}
 		}
 		extra := ""
 		if kind == "close" {
@@ -399,6 +416,14 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 }
 
 func (a *App) cmdPush(o *Opts) error {
+	if a.localOnly(o.str("repo")) {
+		a.noteLocalOnly(o, []string{o.str("repo")}, 0)
+		return nil
+	}
+	if r, l := a.splitLocal(a.Shorts()); o.str("repo") == "" && len(r) == 0 {
+		a.noteLocalOnly(o, l, 0)
+		return nil
+	}
 	p, f, busy := a.push(o.str("repo"), "")
 	s := ""
 	if busy {
@@ -414,7 +439,12 @@ func (a *App) cmdPush(o *Opts) error {
 func (a *App) cmdPull(o *Opts) error {
 	rc := 0
 	parts := []string{}
-	for _, short := range a.shortsFor(o) {
+	remote, local := a.splitLocal(a.shortsFor(o))
+	a.noteLocalOnly(o, local, len(remote))
+	if len(remote) == 0 {
+		return nil
+	}
+	for _, short := range remote {
 		n, err := a.pull(short, o.B["full"])
 		if err != nil {
 			parts = append(parts, short+"=ERR")
@@ -433,7 +463,8 @@ func (a *App) cmdPull(o *Opts) error {
 
 func (a *App) cmdPrune(o *Opts) error {
 	parts := []string{}
-	for _, short := range a.shortsFor(o) {
+	remote, _ := a.splitLocal(a.shortsFor(o)) // local-only issues are canonical: never pruned
+	for _, short := range remote {
 		a.withLock(".pull.lock", func() error {
 			parts = append(parts, fmt.Sprintf("%s=%d", short, a.pruneFiles(short)))
 			return nil
@@ -475,7 +506,14 @@ func (a *App) doSync(shorts []string, quiet bool, out io.Writer, repo string) in
 }
 
 func (a *App) cmdSync(o *Opts) error {
-	rc := a.doSync(a.shortsFor(o), o.B["quiet"], a.Out, o.str("repo"))
+	remote, local := a.splitLocal(a.shortsFor(o))
+	if !o.B["quiet"] {
+		a.noteLocalOnly(o, local, len(remote))
+	}
+	if len(remote) == 0 {
+		return nil
+	}
+	rc := a.doSync(remote, o.B["quiet"], a.Out, o.str("repo"))
 	if o.B["quiet"] { // the marker belongs to the background sync that this process is
 		os.Remove(filepath.Join(a.Home, ".autosync"))
 	}
