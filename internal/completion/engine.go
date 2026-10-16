@@ -176,8 +176,10 @@ func completeIssues(src *lazy, prev []string, cur string) Result {
 		}
 		return Result{Dir: DirNoFiles}
 	case "milestones":
-		if len(rest) > 0 && rest[0] == "show" {
-			return walkCmd(src, find("milestones show"), rest[1:], cur)
+		if len(rest) > 0 {
+			if ci := find("milestones " + rest[0]); ci != nil {
+				return walkCmd(src, ci, rest[1:], cur)
+			}
 		}
 	}
 	ci := find(name)
@@ -192,10 +194,12 @@ func walkCmd(src *lazy, ci *issues.CmdInfo, rest []string, cur string) Result {
 		return Result{Dir: DirNoFiles}
 	}
 	r := walk(src, ci, rest, cur)
-	if ci.Name == "milestones" && cur != "" && !strings.HasPrefix(cur, "-") && len(rest) == 0 {
-		r.Cands = append(filterPrefix([]Candidate{{"show", "one milestone's progress and its issues"}}, cur, false), r.Cands...)
-	} else if ci.Name == "milestones" && cur == "" && len(rest) == 0 {
-		r.Cands = append([]Candidate{{"show", "one milestone's progress and its issues"}}, r.Cands...)
+	if ci.Name == "milestones" && !strings.HasPrefix(cur, "-") && len(rest) == 0 {
+		var subs []Candidate
+		for _, n := range []string{"show", "new", "edit", "close", "reopen"} {
+			subs = append(subs, Candidate{n, helpSummary("milestones " + n)})
+		}
+		r.Cands = append(filterPrefix(subs, cur, false), r.Cands...)
 	}
 	return r
 }
@@ -350,6 +354,10 @@ func walk(src *lazy, ci *issues.CmdInfo, prev []string, cur string) Result {
 				c[i].Value = prefix + c[i].Value
 			}
 			return Result{c, DirNoFiles}
+		case "date":
+			if ci.Name == "milestones edit" {
+				c = append(c, Candidate{"none", "clear the due date"})
+			}
 		case "file":
 			return Result{Dir: DirDefault}
 		default:
@@ -410,7 +418,8 @@ func walk(src *lazy, ci *issues.CmdInfo, prev []string, cur string) Result {
 	case "ref":
 		return Result{Refs(s, ci.Name, cur, repos), DirNoFiles}
 	case "milestone":
-		c := Milestones(s, repos)
+		state := map[string]string{"milestones close": "open", "milestones reopen": "closed"}[ci.Name]
+		c := MilestonesFor(s, repos, state, true)
 		if ci.Name == "milestone" {
 			c = append([]Candidate{{"none", "clear the milestone"}}, c...)
 		}
@@ -446,4 +455,13 @@ func filterPrefix(c []Candidate, typed string, fold bool) []Candidate {
 		}
 	}
 	return out
+}
+
+func helpSummary(name string) string {
+	for _, ci := range issues.Describe() {
+		if ci.Name == name {
+			return ci.Summary
+		}
+	}
+	return ""
 }

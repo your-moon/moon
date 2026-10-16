@@ -193,7 +193,8 @@ resolve to the real number through `localmap.tsv` after the sync). Titles are un
 refused. Due dates are `YYYY-MM-DD`. A title that already exists on GitHub is adopted, not created twice, and a sync that
 died half way is safe to run again. A repo with `local = true` has no sync: the same commands write the mirror directly and
 milestones get plain numbers. `<alias>/milestones.tsv` holds number, local id, title, state, due, description and update time;
-`pull` fills it from GitHub, and the open/closed counts always come from the issues.
+`pull` fills it from GitHub, and the open/closed counts always come from the issues. Tab completion offers titles and `M-n` ids for
+`milestones edit|close|reopen` (close: open ones, reopen: closed ones) and for `-m`.
 
 ## Local numbering
 
