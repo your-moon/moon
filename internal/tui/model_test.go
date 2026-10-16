@@ -336,7 +336,7 @@ func TestGoldenViews(t *testing.T) {
 	}
 	m := press(mi.model(50, 20), "j", "j", "j", "enter") // app#2: has a claim and comments
 	golden(t, "detail_50", m.View())
-	m = press(mi.model(120, 30), "?")
+	m = press(mi.model(120, 40), "?")
 	golden(t, "help_120", m.View())
 }
 
@@ -355,6 +355,7 @@ func (bigStore) Reopen(string) error                    { return nil }
 func (bigStore) Comment(string, string) error           { return nil }
 func (bigStore) Milestones() []issues.MilestoneRow      { return nil }
 func (bigStore) SetMilestone(string, string) error      { return nil }
+func (bigStore) Label(string, []string, []string) error { return nil }
 
 func TestThousandIssuesStayInstant(t *testing.T) {
 	var snap issues.Snapshot

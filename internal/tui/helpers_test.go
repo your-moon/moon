@@ -201,3 +201,5 @@ func golden(t *testing.T, name, got string) {
 }
 
 func writeFile(p, s string) error { return os.WriteFile(p, []byte(s), 0o644) }
+
+func shiftTab() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyShiftTab} }

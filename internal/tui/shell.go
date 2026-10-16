@@ -149,7 +149,7 @@ func (t *issuesTab) Init() tea.Cmd { return t.m.Init() }
 func (t *issuesTab) View() string  { return t.m.View() }
 func (t *issuesTab) Keys() string  { return "j/k move  / search  s sort  f filter  c claim  ? help" }
 func (t *issuesTab) Capturing() bool {
-	return t.m.mode == modeSearch || t.m.mode == modePrompt || t.m.mode == modePick
+	return t.m.mode == modeSearch || t.m.mode == modePrompt || t.m.mode == modePick || t.m.mode == modeCmd
 }
 func (t *issuesTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 	nm, c := t.m.Update(msg)
