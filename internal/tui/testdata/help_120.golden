@@ -3,6 +3,11 @@ Keys
   j k, up down     move              g G      top, bottom
   pgup pgdn        page              ctrl-d u scroll the detail
   /                search (same match as ls -q: title or labels)
+                   tokens: label:bug milestone:"v1 beta" status:working repo:app
+                   (status: working, in review, stale, blocked, ready, open, done; label: as -L)
+  :                command line: claim release close reopen comment label milestone sort filter repo q
+  tab              complete the word (in / : M f): one match fills it, several fill the common
+                   prefix and list; tab again cycles, shift-tab goes back, esc closes the list
   s                cycle sort: number, updated, created, title, status
   r                reverse the sort
   w                only issues being worked on now (status working); again for all
@@ -25,6 +30,11 @@ process is gone), blocked, ready, open, done. done! = closed but a claim is stil
 
 Nothing is sent to GitHub from here. This view has no push, pull or sync;
 queued writes are sent later with: moon issues sync
+
+Press any key to close.
+
+
+
 
 any key closes
 5/7  state:open  sort:number↓  labels:full  |  mirror pulled 5 min ago

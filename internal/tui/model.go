@@ -11,10 +11,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/your-moon/moon/internal/completion"
 	"github.com/your-moon/moon/internal/issues"
 )
 
@@ -29,6 +31,7 @@ type Store interface {
 	Comment(ref, body string) error
 	Milestones() []issues.MilestoneRow
 	SetMilestone(ref, title string) error
+	Label(ref string, add, remove []string) error
 }
 
 // Options configure a model.
@@ -59,6 +62,7 @@ const (
 	modeMenu
 	modeHelp
 	modePick // milestone picker
+	modeCmd  // the : command line
 )
 
 // noMilestone is the filter value for issues without a milestone.
@@ -101,8 +105,16 @@ type Model struct {
 	reverse bool
 
 	fState, fLabel, fMilestone, fAlias string
-	fWorking                           bool   // w: only issues with status working
-	labelMode                          string // "" = by terminal width; else issues.LabelsFull, LabelsShort or LabelsNone
+	fWorking                           bool             // w: only issues with status working
+	labelMode                          string           // "" = by terminal width; else issues.LabelsFull, LabelsShort or LabelsNone
+	pq                                 completion.Query // the search box split into filter tokens
+
+	comp    compState // open Tab candidate list
+	hist    []string  // : command history, this session
+	histPos int
+
+	menuTyped  string // type-ahead in the label and milestone lists
+	menuTyping bool
 
 	prevState string // state filter before a milestone drill-in
 	drilled   bool
@@ -181,7 +193,15 @@ func (m *Model) matches(e *entry) bool {
 			return false
 		}
 	}
-	if q := strings.ToLower(m.query); q != "" && !strings.Contains(e.lowTitle, q) && !strings.Contains(e.lowLabel, q) {
+	text := m.query
+	if m.pq.HasFilters {
+		if !m.pq.Match(it) {
+			return false
+		}
+		text = m.pq.Text
+	}
+	if q := strings.ToLower(text); q != "" && !strings.Contains(e.lowTitle, q) && !strings.Contains(e.lowLabel, q) &&
+		!(strings.Contains(q, "#") && !strings.ContainsAny(q, " \t") && strings.HasPrefix(strings.ToLower(it.Ref), q)) { // a ref typed or completed
 		return false
 	}
 	return true
@@ -224,6 +244,7 @@ func (m *Model) before(a, b *entry) bool {
 
 func (m *Model) refilter() {
 	prev := m.cursor
+	m.pq = completion.ParseQuery(m.query)
 	m.rows = make([]*entry, 0, len(m.all))
 	for i := range m.all {
 		if m.matches(&m.all[i]) {
@@ -373,6 +394,8 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keySearch(k), nil
 	case modePrompt:
 		return m.keyPrompt(k), nil
+	case modeCmd:
+		return m.keyCmd(k)
 	case modeMenu:
 		return m.keyMenu(s), nil
 	case modePick:
@@ -460,11 +483,14 @@ func (m Model) common(s string) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 	case "/":
 		m.mode = modeSearch
+		m.comp = compState{}
 		m.full = false
 		m.input.Prompt = ""
 		m.input.SetValue(m.query)
 		m.input.CursorEnd()
 		m.input.Focus()
+	case ":":
+		m.startCmd()
 	case "s":
 		m.sortBy = (m.sortBy + 1) % sortKey(len(sortNames))
 		m.refilter()
@@ -521,13 +547,10 @@ func (m *Model) startPick() {
 		return
 	}
 	m.pickOpts = []string{""}
-	seen := map[string]bool{}
-	for _, r := range m.st.Milestones() {
-		if r.Alias == it.Alias && !seen[r.Title] {
-			seen[r.Title] = true
-			m.pickOpts = append(m.pickOpts, r.Title)
-		}
+	for _, c := range completion.Milestones(m.src(), []string{it.Alias}) { // the engine's list, as the shell offers it
+		m.pickOpts = append(m.pickOpts, c.Value)
 	}
+	m.comp = compState{}
 	m.mode, m.pickCur = modePick, 0
 	m.input.Prompt = ""
 	m.input.SetValue("")
@@ -536,24 +559,73 @@ func (m *Model) startPick() {
 
 // pickMatches are the picker options that match what was typed. "-" matches the no-milestone row.
 func (m *Model) pickMatches() []string {
-	q := strings.ToLower(m.input.Value())
+	q := m.input.Value()
 	var out []string
-	for _, o := range m.pickOpts {
-		switch {
-		case o == "":
-			if q == "" || q == "-" {
-				out = append(out, o)
-			}
-		case q != "-" && strings.Contains(strings.ToLower(o), q):
-			out = append(out, o)
+	if q == "" || q == "-" {
+		out = append(out, "")
+	}
+	if q == "-" {
+		return out
+	}
+	for _, c := range completion.Narrow(pickCands(m.pickOpts), q) {
+		out = append(out, c.Value)
+	}
+	return out
+}
+
+func pickCands(opts []string) []completion.Candidate {
+	var out []completion.Candidate
+	for _, o := range opts {
+		if o != "" {
+			out = append(out, completion.Candidate{Value: o})
 		}
 	}
 	return out
 }
 
+// pickTab is Tab in the milestone picker: one prefix match completes the text, several complete to the
+// longest common prefix, and the next Tab (or Shift-Tab) cycles the highlighted row.
+func (m Model) pickTab(back bool) Model {
+	matches := m.pickMatches()
+	if m.comp.open && len(matches) > 0 {
+		if back {
+			m.pickCur = (m.pickCur + len(matches) - 1) % len(matches)
+		} else {
+			m.pickCur = (m.pickCur + 1) % len(matches)
+		}
+		return m
+	}
+	typed := m.input.Value()
+	var vals []string
+	for _, c := range completion.Narrow(pickCands(m.pickOpts), typed) {
+		if strings.HasPrefix(strings.ToLower(c.Value), strings.ToLower(typed)) {
+			vals = append(vals, c.Value)
+		}
+	}
+	switch len(vals) {
+	case 0:
+		return m
+	case 1:
+		m.input.SetValue(vals[0])
+		m.input.CursorEnd()
+		m.pickCur = 0
+		return m
+	}
+	if p := completion.CommonPrefix(vals); len(p) > len(typed) {
+		m.input.SetValue(p)
+		m.input.CursorEnd()
+	}
+	m.pickCur = 0
+	m.comp = compState{open: true}
+	return m
+}
+
 func (m Model) keyPick(k tea.KeyMsg) Model {
-	switch k.String() {
+	switch s := k.String(); s {
+	case "tab", "shift+tab":
+		return m.pickTab(s == "shift+tab")
 	case "esc":
+		m.comp = compState{}
 		m.mode = modeList
 		m.input.Blur()
 		m.msg = "milestone unchanged"
@@ -587,6 +659,7 @@ func (m Model) keyPick(k tea.KeyMsg) Model {
 		m.reload()
 		return m
 	default:
+		m.comp = compState{}
 		m.input, _ = m.input.Update(k)
 		m.pickCur = 0
 	}
@@ -629,8 +702,17 @@ func (m *Model) clampDetail() {
 }
 
 func (m Model) keySearch(k tea.KeyMsg) Model {
-	switch k.String() {
+	switch s := k.String(); s {
+	case "tab", "shift+tab":
+		m = m.tabComplete(s == "shift+tab", m.searchCompleter())
+		m.query = m.input.Value()
+		m.refilter()
+		return m
 	case "esc":
+		if m.comp.open {
+			m.comp = compState{}
+			return m
+		}
 		m.query = ""
 		m.mode = modeList
 		m.input.Blur()
@@ -639,12 +721,15 @@ func (m Model) keySearch(k tea.KeyMsg) Model {
 		m.mode = modeList
 		m.input.Blur()
 	case "up":
+		m.comp = compState{}
 		m.move(-1)
 		return m
 	case "down":
+		m.comp = compState{}
 		m.move(1)
 		return m
 	default:
+		m.comp = compState{}
 		m.input, _ = m.input.Update(k)
 		m.query = m.input.Value()
 	}
@@ -652,17 +737,96 @@ func (m Model) keySearch(k tea.KeyMsg) Model {
 	return m
 }
 
+// menuList is the label or milestone list narrowed by the type-ahead (the engine's Narrow).
+func (m Model) menuList() []string {
+	if m.menuTyped == "" {
+		return m.menuOpts
+	}
+	var out []string
+	for _, c := range completion.Narrow(pickCands(m.menuOpts), m.menuTyped) {
+		out = append(out, c.Value)
+	}
+	return out
+}
+
+// menuTab is Tab in the label and milestone lists: complete the typed text like the other prompts do (one
+// prefix match fills it in, several fill the common prefix), and once there is nothing more to add, step
+// through the rows (Shift-Tab goes back).
+func (m Model) menuTab(back bool) Model {
+	list := m.menuList()
+	var vals []string
+	for _, c := range completion.Narrow(pickCands(m.menuOpts), m.menuTyped) {
+		if strings.HasPrefix(strings.ToLower(c.Value), strings.ToLower(m.menuTyped)) {
+			vals = append(vals, c.Value)
+		}
+	}
+	if !back && m.menuTyping && len(vals) > 0 {
+		if p := completion.CommonPrefix(vals); len(p) > len(m.menuTyped) {
+			m.menuTyped, m.menuCur = p, 0
+			return m
+		}
+	}
+	if len(list) == 0 {
+		return m
+	}
+	if back {
+		m.menuCur = (m.menuCur + len(list) - 1) % len(list)
+	} else {
+		m.menuCur = (m.menuCur + 1) % len(list)
+	}
+	return m
+}
+
+func (m Model) keyMenuTyping(s string) Model {
+	switch {
+	case s == "esc":
+		m.menuTyping, m.menuTyped, m.menuCur = false, "", 0
+	case s == "tab" || s == "shift+tab":
+		return m.menuTab(s == "shift+tab")
+	case s == "enter":
+		return m.menuPick()
+	case s == "down" || s == "ctrl+n":
+		if m.menuCur+1 < len(m.menuList()) {
+			m.menuCur++
+		}
+	case s == "up" || s == "ctrl+p":
+		if m.menuCur > 0 {
+			m.menuCur--
+		}
+	case s == "backspace":
+		if r := []rune(m.menuTyped); len(r) > 0 {
+			m.menuTyped = string(r[:len(r)-1])
+		}
+		m.menuCur = 0
+	case utf8.RuneCountInString(s) == 1:
+		m.menuTyped += s
+		m.menuCur = 0
+	}
+	return m
+}
+
 func (m Model) keyMenu(s string) Model {
-	n := len(m.menuOpts)
+	if m.menu != menuTop && m.menuTyping {
+		return m.keyMenuTyping(s)
+	}
+	n := len(m.menuList())
 	if m.menu == menuTop {
 		n = 4
 	}
 	switch s {
+	case "/":
+		if m.menu != menuTop {
+			m.menuTyping, m.menuTyped, m.menuCur = true, "", 0
+		}
+	case "tab", "shift+tab":
+		if m.menu != menuTop {
+			return m.menuTab(s == "shift+tab")
+		}
 	case "esc", "q", "f":
 		if m.menu == menuTop {
 			m.mode = modeList
 		} else {
-			m.menu, m.menuCur = menuTop, 0
+			m.menu, m.menuCur, m.menuTyped, m.menuTyping = menuTop, 0, "", false
 		}
 	case "j", "down":
 		if m.menuCur+1 < n {
@@ -693,10 +857,10 @@ func (m Model) menuPick() Model {
 			}
 			m.refilter()
 		case 1:
-			m.menu, m.menuCur = menuLabel, 0
+			m.menu, m.menuCur, m.menuTyped, m.menuTyping = menuLabel, 0, "", false
 			m.menuOpts = append([]string{""}, issues.SortedLabels(m.snap.Items)...)
 		case 2:
-			m.menu, m.menuCur = menuMilestone, 0
+			m.menu, m.menuCur, m.menuTyped, m.menuTyping = menuMilestone, 0, "", false
 			m.menuOpts = append([]string{""}, issues.SortedMilestones(m.snap.Items)...)
 		case 3:
 			m.fState, m.fLabel, m.fMilestone, m.fAlias, m.fWorking = "open", "", "", "", false
@@ -705,8 +869,8 @@ func (m Model) menuPick() Model {
 		}
 	case menuLabel, menuMilestone:
 		v := ""
-		if m.menuCur < len(m.menuOpts) {
-			v = m.menuOpts[m.menuCur]
+		if l := m.menuList(); m.menuCur < len(l) {
+			v = l[m.menuCur]
 		}
 		if m.menu == menuLabel {
 			m.fLabel = v
@@ -714,6 +878,7 @@ func (m Model) menuPick() Model {
 			m.fMilestone = v
 		}
 		m.menu, m.menuCur, m.mode = menuTop, 0, modeList
+		m.menuTyped, m.menuTyping = "", false
 		m.refilter()
 	}
 	return m
@@ -761,10 +926,12 @@ func (m Model) mouse(e tea.MouseMsg) Model {
 // ---------- writes (queued locally, never pushed) ----------
 
 func (m *Model) claim() {
-	it := m.cur()
-	if it == nil {
-		return
+	if it := m.cur(); it != nil {
+		m.claimItem(it)
 	}
+}
+
+func (m *Model) claimItem(it *issues.Item) {
 	if c := it.Claim; c != nil && !c.Stale && c.Agent != m.opt.Agent {
 		m.msg = "not claimed: " + it.Ref + " is held by " + c.Agent + " (" + age(c.AgeSec) + ")"
 		return
@@ -779,10 +946,12 @@ func (m *Model) claim() {
 }
 
 func (m *Model) release() {
-	it := m.cur()
-	if it == nil {
-		return
+	if it := m.cur(); it != nil {
+		m.releaseItem(it)
 	}
+}
+
+func (m *Model) releaseItem(it *issues.Item) {
 	if it.Claim == nil {
 		m.msg = it.Ref + " has no claim"
 		return

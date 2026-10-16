@@ -1,0 +1,24 @@
+  REF     STATE  STATUS  LABELS              TITLE                      │ erp#510  open
+> erp#510 open   open    kind:feature        search: add filters        │ search: add filters
+  erp#51  open   open    kind:bug            widget: renders blank      │
+  erp#50  open   open    docs                docs: explain config lookup│ labels: kind:feature
+  erp#3   open   open    kind:feature        export: add CSV download   │ milestone: -
+@ erp#2   open   working kind:bug,area::auth auth: token refresh loops  │ author: sam
+                                                                        │ claim: none
+                                                                        │ status: open
+                                                                        │ ──────────────────────────────────────────────
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+  erp#510  search: add filters
+  erp#51   widget: renders blank
+  erp#50   docs: explain config lookup
+  erp#3    export: add CSV download
+enter run  tab complete  up/down history  esc cancel
+:claim erp#_

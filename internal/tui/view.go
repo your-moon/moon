@@ -133,6 +133,14 @@ func (m Model) View() string {
 		lines = append(lines, "")
 	}
 	lines = lines[:bodyH]
+	if m.mode == modeSearch || m.mode == modeCmd { // the candidate list sits just above the prompt
+		if cl := m.compView(m.w); len(cl) > 0 {
+			if len(cl) > bodyH {
+				cl = cl[:bodyH]
+			}
+			copy(lines[bodyH-len(cl):], cl)
+		}
+	}
 	lines = append(lines, m.footer()...)
 	for i, l := range lines {
 		if lipgloss.Width(l) > m.w {
@@ -444,6 +452,11 @@ const helpText = `Keys
   j k, up down     move              g G      top, bottom
   pgup pgdn        page              ctrl-d u scroll the detail
   /                search (same match as ls -q: title or labels)
+                   tokens: label:bug milestone:"v1 beta" status:working repo:app
+                   (status: working, in review, stale, blocked, ready, open, done; label: as -L)
+  :                command line: claim release close reopen comment label milestone sort filter repo q
+  tab              complete the word (in / : M f): one match fills it, several fill the common
+                   prefix and list; tab again cycles, shift-tab goes back, esc closes the list
   s                cycle sort: number, updated, created, title, status
   r                reverse the sort
   w                only issues being worked on now (status working); again for all
@@ -498,7 +511,11 @@ func (m Model) menuView() string {
 		if m.menu == menuMilestone {
 			name = "milestone"
 		}
-		b.WriteString("Pick a " + name + "  (enter selects, esc back)\n\n")
+		hdr := "Pick a " + name + "  (enter selects, / types to narrow, tab completes, esc back)"
+		if m.menuTyping {
+			hdr = "Pick a " + name + "  filter: " + oneLine(m.menuTyped) + "_  (enter selects, tab completes, esc stops typing)"
+		}
+		b.WriteString(hdr + "\n\n")
 		vis := m.h - footerLines - 3
 		if vis < 3 {
 			vis = 3
@@ -507,8 +524,9 @@ func (m Model) menuView() string {
 		if m.menuCur >= vis {
 			start = m.menuCur - vis + 1
 		}
-		for i := start; i < len(m.menuOpts) && i < start+vis; i++ {
-			line(i, anyv(m.menuOpts[i]))
+		list := m.menuList()
+		for i := start; i < len(list) && i < start+vis; i++ {
+			line(i, anyv(list[i]))
 		}
 	}
 	return b.String()
@@ -553,9 +571,11 @@ func (m Model) footer() []string {
 	hints := "j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  x close  m comment  ? help  q quit"
 	switch m.mode {
 	case modeSearch:
-		return []string{stDim.Render(fit("enter keep  esc clear  up/down move", m.w)), fit("/"+oneLine(m.input.Value())+"_", m.w)}
+		return []string{stDim.Render(fit("enter keep  tab complete  esc clear  up/down move", m.w)), fit("/"+oneLine(m.input.Value())+"_", m.w)}
+	case modeCmd:
+		return []string{stDim.Render(fit("enter run  tab complete  up/down history  esc cancel", m.w)), fit(":"+oneLine(m.input.Value())+"_", m.w)}
 	case modePick:
-		return []string{stDim.Render(fit("enter apply  esc cancel  up/down move", m.w)), fit("milestone> "+oneLine(m.input.Value())+"_", m.w)}
+		return []string{stDim.Render(fit("enter apply  tab complete  esc cancel  up/down move", m.w)), fit("milestone> "+oneLine(m.input.Value())+"_", m.w)}
 	case modePrompt:
 		return []string{stDim.Render(fit("enter queue the comment  esc cancel", m.w)), fit("comment> "+oneLine(m.input.Value())+"_", m.w)}
 	case modeHelp, modeMenu:

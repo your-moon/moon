@@ -146,6 +146,29 @@ with no known colour gets a fixed colour from its prefix. Optional overrides in 
 A bad key or value fails with the file, line and key (`moon.toml:7: [colors] unknown key "stat-working" (did you mean status-working?)`).
 Only the first 100 labels of a repo are fetched for colours.
 
+## Tab completion
+
+`moon completion zsh|bash|fish` prints the completion script to stdout. It writes no file and needs no sudo.
+
+    source <(moon completion zsh)            # zsh: add to ~/.zshrc (after compinit, or let the script run it)
+    source <(moon completion bash)           # bash: add to ~/.bashrc
+    moon completion fish | source            # fish: add to ~/.config/fish/config.fish
+
+For a permanent install without running moon at every shell start, save the output once:
+
+    moon completion zsh  > "${fpath[1]}/_moon"                  # zsh: any directory on $fpath, then restart the shell
+    moon completion bash > ~/.local/share/bash-completion/completions/moon
+    moon completion fish > ~/.config/fish/completions/moon.fish
+
+It completes commands and subcommands, long and short flags (with descriptions in zsh and fish), enum values
+(`--sort`, `--state`, `--format`, `--reason`), repo aliases for `-R`, labels for `-L` (stored names and the short display
+names), milestone titles for `-m` (quoted when they have spaces), `--config` as a file, and refs for the commands that take
+one: `moon issues show er<Tab>` offers `erp#512  title...`, newest first, at most 200, filtered by what you typed
+(`erp#5` offers `erp#5xx`). `claim` offers only unclaimed open issues, `release` only claimed ones, `reopen` only closed
+ones. Candidates come from the local mirror only: never GitHub, never an autosync, and with no `moon.toml` found nothing is
+offered and nothing is printed. The scripts only call `moon __complete <words...>` (hidden; one candidate per line, optional
+`<TAB>description`, last line `:<directive>`), so all logic is in Go and tested there.
+
 ## Commands
 
 `ls show milestones prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune`,
@@ -185,11 +208,23 @@ queued locally through the same code as the CLI, and the footer shows `queued: N
 `moon issues sync` yourself. `NO_COLOR` is respected (plain text, ASCII progress bars); colours come from the palette above. Mouse wheel scrolls, a click selects.
 Under 100 columns the detail stacks under the list; under 60 columns only the list shows and `enter` opens the detail.
 
+**Agents and scripts must not use the TUI**: it waits for keys. `moon tui` and `moon issues tui` refuse unless stdin and stdout
+are terminals (exit 2), and always refuse when `MOON_NO_TUI` is set to anything; use `moon issues ls` / `show` instead.
+
+In the dashboard `Tab` completes with the same engine as the shell. In the `/` search box it completes the word under the
+cursor from refs, label names and milestone titles, and understands the filter tokens `label:bug`, `milestone:"v1 beta"`,
+`status:working` (any work status: `working`, `in review`, `stale`, `blocked`, `ready`, `open`, `done`; comma-separated for several) and `repo:erp`. One match fills the word, several fill their common
+prefix and show a list; `Tab` again cycles, `Shift-Tab` goes back, `Esc` closes the list. `:` opens a command line
+(`:claim erp#5<Tab>`, `release close reopen comment label milestone sort filter repo q`), completed like the shell and run
+through the same write path as the CLI; errors show in the footer and `Up`/`Down` browse the history. The `M` picker and the
+`f` label and milestone lists (`/` types to narrow) use the same Tab behavior.
+
 | Key | Action |
 |---|---|
 | `1`-`9`, `[` `]` | switch tab |
 | `j` `k`, arrows, `g` `G`, `pgup` `pgdn` | move |
-| `/` | live search, the same match as `ls -q` (title or labels); `esc` clears |
+| `/` | live search, the same match as `ls -q` (title or labels), plus `label:` `milestone:` `status:` `repo:` tokens; `tab` completes, `esc` clears |
+| `:` | command line: `claim release close reopen comment label milestone sort filter repo q`; `tab` completes, up/down history |
 | `s`, `r` | cycle sort (number, updated, created, title, status), reverse |
 | `w` | only issues being worked on now (status working); again for all |
 | `l` | labels column: full, short, hidden (the footer shows the mode; default by width: full from 110, short from 70) |

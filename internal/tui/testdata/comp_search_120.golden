@@ -1,0 +1,24 @@
+  REF     STATE  STATUS LABELS       TITLE                              │ erp#510  open
+> erp#510 open   open   kind:feature search: add filters                │ search: add filters
+                                                                        │
+                                                                        │ labels: kind:feature
+                                                                        │ milestone: -
+                                                                        │ author: sam
+                                                                        │ claim: none
+                                                                        │ status: open
+                                                                        │ ──────────────────────────────────────────────
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+> erp#510  search: add filters
+  erp#51   widget: renders blank
+  erp#50   docs: explain config lookup
+  erp#52   cleanup: remove dead flags
+enter keep  tab complete  esc clear  up/down move
+/erp#510_

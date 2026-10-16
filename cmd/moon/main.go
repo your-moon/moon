@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/your-moon/moon/internal/completion"
 	"github.com/your-moon/moon/internal/issues"
 	"github.com/your-moon/moon/internal/tui"
 )
@@ -16,14 +17,30 @@ import (
 // version is set at build time: -ldflags "-X main.version=1.2.3".
 var version = "dev"
 
-const usage = `usage: moon <command> [args]
+// topCommands is the one list of top-level commands: the usage text, "did you mean" and shell completion read it.
+var topCommands = []completion.Command{
+	{Name: "tui", Summary: "interactive terminal dashboard: issues, claims (press ? inside for keys)"},
+	{Name: "issues", Summary: "local-first mirror of GitHub issues and pull requests (moon help issues)"},
+	{Name: "version", Summary: "print the version"},
+	{Name: "completion", Summary: "print the shell completion script: zsh, bash or fish"},
+	{Name: "help", Summary: "print this text, or: moon help <tool>"},
+}
 
-commands:
-  tui       interactive terminal dashboard: issues, claims (press ? inside for keys)
-  issues    local-first mirror of GitHub issues and pull requests (moon help issues)
-  version   print the version
-  help      print this text, or: moon help <tool>
-`
+var usage = func() string {
+	var b strings.Builder
+	b.WriteString("usage: moon <command> [args]\n\ncommands:\n")
+	for _, c := range topCommands {
+		pad := strings.Repeat(" ", max(1, 10-len(c.Name))) // column 10, wider only for a longer name
+		fmt.Fprintf(&b, "  %s%s%s\n", c.Name, pad, c.Summary)
+	}
+	return b.String()
+}()
+
+func completeOptions(e issues.Env) completion.Options {
+	return completion.Options{Top: topCommands, Open: func(cfg, dir string) completion.Source {
+		return completion.OpenSession(cfg, dir, issues.Env{Getenv: e.Getenv, Cwd: e.Cwd})
+	}}
+}
 
 func main() {
 	cwd, _ := os.Getwd()
@@ -41,6 +58,20 @@ func run(args []string, e issues.Env) int {
 		return 0
 	}
 	switch args[0] {
+	case "__complete": // hidden: called by the shell scripts, never prints an error
+		return completion.RunComplete(completeOptions(e), args[1:], e.Out)
+	case "completion":
+		if len(args) != 2 {
+			fmt.Fprintln(e.Err, "usage: moon completion zsh|bash|fish")
+			return 2
+		}
+		sc, err := completion.Script(args[1], "moon")
+		if err != nil {
+			fmt.Fprintln(e.Err, "moon completion:", err)
+			return 2
+		}
+		io.WriteString(e.Out, sc)
+		return 0
 	case "tui":
 		return tui.Run(args[1:], e)
 	case "issues":
@@ -91,7 +122,7 @@ func issuesTUIArgs(args []string) ([]string, bool) {
 }
 
 func didYouMean(word string) string {
-	if c := issues.Closest(word, []string{"issues", "tui", "version", "help"}); c != "" {
+	if c := issues.Closest(word, []string{"issues", "tui", "version", "completion", "help"}); c != "" {
 		return fmt.Sprintf(" (did you mean %s?)", c)
 	}
 	return ""
