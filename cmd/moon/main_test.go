@@ -38,3 +38,27 @@ func TestRun(t *testing.T) {
 		t.Errorf("issues ls without config must fail, got 0")
 	}
 }
+
+func TestIssuesTUIArgs(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
+		want string
+		ok   bool
+	}{
+		{[]string{"tui"}, "", true},
+		{[]string{"tui", "--agent", "x"}, "--agent x", true},
+		{[]string{"--config", "f", "tui"}, "--config f", true},
+		{[]string{"--dir=d", "tui", "--agent=a"}, "--dir=d --agent=a", true},
+		{[]string{"ls"}, "", false},
+		{[]string{"--config", "f", "ls"}, "", false},
+		{nil, "", false},
+	} {
+		got, ok := issuesTUIArgs(c.in)
+		if ok != c.ok || strings.Join(got, " ") != c.want {
+			t.Errorf("%v: %q %v", c.in, got, ok)
+		}
+	}
+	if _, o, _ := runArgs("help"); !strings.Contains(o, "tui ") {
+		t.Errorf("help does not list tui: %q", o)
+	}
+}
