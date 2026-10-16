@@ -31,7 +31,7 @@ Each `[repos.<alias>]` declares one repository (`github = "owner/name"`, alias i
 ## Commands
 
 `ls show milestones prs pr show frontier claim release claims status new comment close reopen label milestone edit push pull sync prune`,
-plus `moon version`. Run `moon issues help` for the flags. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
+`tui` (also `moon tui`, see Terminal UI), plus `moon version`. Run `moon issues help` for the flags. Run `moon tui` for the interactive dashboard. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
 mirror older than 10 minutes, `ISSUES_KEEP_DAYS` (default 30) is how long closed items keep their file, `ISSUES_GH` points at another `gh` binary.
 
 ## Local numbering
@@ -55,6 +55,89 @@ and live only in the mirror; `push`, `pull` and `sync` print "alias is local-onl
 
 Exactly one of `github` or `local = true` is allowed per repo. Everything else (`ls show claim milestones label comment close
 reopen edit status`) works as for a GitHub repo, with the same on-disk layout.
+
+## Terminal UI
+
+    moon tui                 # dashboard: Issues, Milestones, Claims
+    moon issues tui          # the same dashboard, opened on the Issues tab
+
+Flags: `--config FILE`, `--dir MIRROR`, `--agent NAME` (claim holder, default `$USER`). The config is found the same way as for
+`moon issues`; if none is found the screen lists the four places searched. It reads the local mirror only. Writes (`c u x m M`) are
+queued locally through the same code as the CLI, and the footer shows `queued: N`. There is no push, pull or sync in the UI: run
+`moon issues sync` yourself. `NO_COLOR` is respected (plain text, ASCII progress bars). Mouse wheel scrolls, a click selects.
+Under 100 columns the detail stacks under the list; under 60 columns only the list shows and `enter` opens the detail.
+
+| Key | Action |
+|---|---|
+| `1`-`9`, `[` `]` | switch tab |
+| `j` `k`, arrows, `g` `G`, `pgup` `pgdn` | move |
+| `/` | live search, the same match as `ls -q` (title or labels); `esc` clears |
+| `s`, `r` | cycle sort (number, updated, created, title), reverse |
+| `f` | filter menu: state, label, milestone, clear |
+| `tab` | next repo alias, when there are several |
+| `enter`, `esc` | open the detail full screen, go back |
+| `c`, `u` | claim, release; refused (never forced) when another agent holds it |
+| `x` | close or reopen (queued) |
+| `m` | comment (queued; opens `$EDITOR`, else a one-line prompt) |
+| `M` | set the milestone: type to filter, `-` for none (queued) |
+| `?`, `q` | help, quit |
+
+Milestones tab: `enter` opens the Issues tab filtered to that milestone (`esc` clears the chip), `s` cycles due, progress, title and open
+count, `x` hides fully closed milestones. Claims tab: the same data as `moon issues claims`, stale claims dimmed.
+
+Issues tab at 80 columns (invented data):
+
+```
+  REF    STATE  MILESTONE  LABELS           TITLE
+  app#7  open   v1         feature,area::a… auth: add passkey support
+> app#5  open   v2         bug              widget: renders blank for ünïcode a…
+  app#4  open              docs             docs: explain config lookup
+  app#3  open   v2         feature          export: add CSV download
+@ app#2  open   v1         bug,area::auth   auth: token refresh loops
+────────────────────────────────────────────────────────────────────────────────
+ app#5  open
+ widget: renders blank for ünïcode and 日本語 titles
+
+ labels: bug
+ milestone: v2
+ author: sam
+ claim: none
+ ───────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k move  / search  s sort  f filter  c claim  u release  x close  m comment  ?…
+5/7  state:open  sort:number↓  |  mirror pulled 5 min ago
+```
+
+Milestones tab:
+
+```
+ 1 Issues  [2 Milestones]  3 Claims
+  MILESTONE      PROGRESS                  DONE    PCT   OPEN  CLOSED DUE
+> alpha          [#######################] 9/9     100%  0     9      2026-01-01
+  v2             [#####------------------] 1/4     25%   3     1      2026-03-01
+  v1             [#############----------] 6/10    60%   4     6      2026-03-10
+  v3             [-----------------------] 0/0     0%    0     0      -
+  (no milestone) [###########------------] 1/2     50%   1     1      -
+
+
+
+
+
+j/k move  enter issues  s sort  x hide done  r reload  q quit
+5 shown of 5  sort:due
+```
 
 ## Build and test
 

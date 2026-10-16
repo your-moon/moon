@@ -1,0 +1,30 @@
+  REF    STATE  MILESTONE  LABELS           TITLE
+  app#7  open   v1         feature,area::a… auth: add passkey support
+> app#5  open   v2         bug              widget: renders blank for ünïcode a…
+  app#4  open              docs             docs: explain config lookup
+  app#3  open   v2         feature          export: add CSV download
+@ app#2  open   v1         bug,area::auth   auth: token refresh loops
+────────────────────────────────────────────────────────────────────────────────
+ app#5  open
+ widget: renders blank for ünïcode and 日本語 titles
+
+ labels: bug
+ milestone: v2
+ author: sam
+ claim: none
+ ───────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k move  / search  s sort  f filter  c claim  u release  x close  m comment  ?…
+5/7  state:open  sort:number↓  |  mirror pulled 5 min ago

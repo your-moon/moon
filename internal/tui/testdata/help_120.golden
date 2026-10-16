@@ -1,0 +1,30 @@
+Keys
+
+  j k, up down     move              g G      top, bottom
+  pgup pgdn        page              ctrl-d u scroll the detail
+  /                search (same match as ls -q: title or labels)
+  s                cycle sort: number, updated, created, title
+  r                reverse the sort
+  f                filter menu: state, label, milestone, clear
+  tab              next repo alias (when several)
+  enter  esc       open the detail full screen, go back
+  c  u             claim, release (agent: --agent or $USER)
+                   refused when another agent holds the claim; never forced
+  x                close or reopen (queued locally)
+  m                comment (queued locally; $EDITOR, else a one-line prompt)
+  M                set the milestone: type to filter, - for none (queued locally)
+  1-9  [ ]         switch dashboard tab
+  ?                this help        q ctrl-c quit
+  mouse            wheel scrolls, click selects
+
+Marks: > selected, @ claimed, + has queued local writes.
+
+Nothing is sent to GitHub from here. This view has no push, pull or sync;
+queued writes are sent later with: moon issues sync
+
+Press any key to close.
+
+
+
+any key closes
+5/7  state:open  sort:number↓  |  mirror pulled 5 min ago
