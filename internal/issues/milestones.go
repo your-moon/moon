@@ -2,16 +2,18 @@ package issues
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-// ms is one row of <alias>/milestones.tsv: title, state, closed, open, due. raw is the file line.
+// ms is one milestone with its counts (see milestone_store.go). raw is the tab-separated line `milestones --format tsv` prints.
 type ms struct {
 	repo, title, state, due, raw string
 	closed, open                 int
+	number                       int
+	localID, desc                string
+	pending                      bool // queued locally, not on GitHub yet
 }
 
 func (m ms) total() int { return m.closed + m.open }
@@ -25,27 +27,7 @@ func (m ms) pct() int {
 	return m.closed * 100 / m.total()
 }
 
-func (a *App) readMilestones(shorts []string) []ms {
-	var out []ms
-	for _, short := range shorts {
-		var lines []string
-		if a.localOnly(short) {
-			lines = a.localMilestones(short)
-		} else if s, err := readText(filepath.Join(a.Home, short, "milestones.tsv")); err == nil {
-			lines = splitLines(s)
-		}
-		for _, line := range lines {
-			f := strings.Split(line, "\t")
-			for len(f) < 5 {
-				f = append(f, "")
-			}
-			c, _ := strconv.Atoi(f[2])
-			o, _ := strconv.Atoi(f[3])
-			out = append(out, ms{repo: short, title: f[0], state: f[1], due: f[4], raw: short + "\t" + line, closed: c, open: o})
-		}
-	}
-	return out
-}
+func (a *App) readMilestones(shorts []string) []ms { return a.msRows(shorts) }
 
 // bar draws progress in w cells. Filled cells are rounded down, so a bar is full only when everything is closed.
 func bar(closed, total, w int, unicode bool) string {
@@ -144,7 +126,8 @@ func (a *App) cmdMilestones(o *Opts) error {
 		l := []any{}
 		for _, m := range rows {
 			l = append(l, Obj{{"repo", m.repo}, {"title", m.title}, {"state", m.state}, {"closed", m.closed}, {"open", m.open},
-				{"total", m.total()}, {"percent", m.pct()}, {"due_on", nilIfEmpty(m.due)}})
+				{"total", m.total()}, {"percent", m.pct()}, {"due_on", nilIfEmpty(m.due)}, {"number", nilIfZero(m.number)}, {"local_id", nilIfEmpty(m.localID)},
+				{"description", nilIfEmpty(m.desc)}})
 		}
 		a.println(dumps(l, false))
 	case "table":
@@ -193,7 +176,11 @@ func (a *App) milestoneTable(rows []ms) string {
 			c = append(c, plain(m.repo))
 		}
 		pc := a.progressColor(m)
-		c = append(c, plain(m.title), cell{s: a.bar(m), color: pc, render: a.barRender(m)}, plain(fmt.Sprintf("%d/%d", m.closed, m.total())), cell{s: fmt.Sprintf("%d%%", m.pct()), color: pc},
+		title := m.title
+		if m.pending && m.localID != "" {
+			title += " (" + m.localID + ", not synced)"
+		}
+		c = append(c, plain(title), cell{s: a.bar(m), color: pc, render: a.barRender(m)}, plain(fmt.Sprintf("%d/%d", m.closed, m.total())), cell{s: fmt.Sprintf("%d%%", m.pct()), color: pc},
 			plain(strconv.Itoa(m.open)), cell{s: due, color: dc})
 		cells[i] = c
 	}
@@ -260,6 +247,10 @@ func (a *App) resolveMilestone(o *Opts) error {
 	if typed == "" {
 		return nil
 	}
+	if err := a.expandMsRef(o); err != nil {
+		return err
+	}
+	typed = o.str("milestone")
 	shorts := a.shortsFor(o)
 	var known []string
 	for _, m := range a.readMilestones(shorts) {
@@ -325,7 +316,18 @@ func (a *App) cmdMilestoneShow(o *Opts) error {
 			if len(m.due) >= 10 {
 				due = "due " + m.due[:10]
 			}
-			a.printf("%s  %d/%d closed · %d%% · %d open · %s\n\n", a.barText(m), m.closed, m.total(), m.pct(), m.open, due)
+			a.printf("%s  %d/%d closed · %d%% · %d open · %s\n", a.barText(m), m.closed, m.total(), m.pct(), m.open, due)
+			if m.localID != "" {
+				note := ""
+				if m.pending {
+					note = " (queued, not on GitHub yet)"
+				}
+				a.printf("%s%s\n", m.localID, note)
+			}
+			if m.desc != "" {
+				a.printf("%s\n", m.desc)
+			}
+			a.println("")
 		}
 	}
 	return a.listRows(o, rows)

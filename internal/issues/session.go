@@ -436,30 +436,18 @@ func (s *Session) Claims() []ClaimRow {
 type MilestoneRow struct {
 	Alias, Title, State string // State is the milestone's own: open or closed
 	Closed, Open        int
-	Due                 string // ISO timestamp, empty when none
+	Due                 string // ISO date (older mirrors: timestamp), empty when none
+	Description         string
+	Number              int    // GitHub number, 0 while the milestone is only queued
+	LocalID             string // M-<n> it was created under, if any
 }
 
-// Milestones reads milestones.tsv for every alias. Mirror only, no network.
+// Milestones is the same list `moon issues milestones` prints, mirror only, no network.
 func (s *Session) Milestones() []MilestoneRow {
 	var out []MilestoneRow
-	for _, short := range s.app.Shorts() {
-		txt, err := readText(filepath.Join(s.app.Home, short, "milestones.tsv"))
-		if err != nil {
-			continue
-		}
-		for _, line := range splitLines(txt) {
-			p := strings.Split(line, "\t")
-			if len(p) < 4 {
-				continue
-			}
-			c, _ := strconv.Atoi(p[2])
-			o, _ := strconv.Atoi(p[3])
-			r := MilestoneRow{Alias: short, Title: p[0], State: p[1], Closed: c, Open: o}
-			if len(p) > 4 {
-				r.Due = p[4]
-			}
-			out = append(out, r)
-		}
+	for _, m := range s.app.msRows(s.app.Shorts()) {
+		out = append(out, MilestoneRow{Alias: m.repo, Title: m.title, State: m.state, Closed: m.closed, Open: m.open, Due: m.due,
+			Description: m.desc, Number: m.number, LocalID: m.localID})
 	}
 	return out
 }

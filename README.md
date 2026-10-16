@@ -171,9 +171,30 @@ offered and nothing is printed. The scripts only call `moon __complete <words...
 
 ## Commands
 
-`ls show milestones prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune`,
+`ls show milestones (new edit close reopen show) prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune`,
 `tui` (also `moon tui`, see Terminal UI), plus `moon version`. Run `moon issues help` for the flags. Run `moon tui` for the interactive dashboard. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
 mirror older than 10 minutes, `ISSUES_KEEP_DAYS` (default 30) is how long closed items keep their file, `ISSUES_GH` points at another `gh` binary.
+
+## Milestones
+
+How work is tracked: **big work is a milestone with issues under it; small work is a single issue.** Everything is created
+locally first and synced to the git provider afterwards, so nothing waits for the network.
+
+    moon issues milestones new "auth rewrite" -d 2026-12-31 -D "move login to the new session store" -R app   # app#M-1
+    moon issues new -R app -m M-1 --title "auth: sessions expire early" --body "..."    # M-1 works wherever a title does
+    moon issues milestones edit M-1 -d 2027-01-15            # or --title T, -D text, -d none
+    moon issues milestones show "auth rewrite"               # due date, description, open/closed counts, its issues
+    moon issues sync                                         # creates the milestone on GitHub first, then the issues
+    moon issues milestones close "auth rewrite"              # reopen undoes it; sync sends both
+    moon issues new -R app --title "docs: typo" --body "..." # small work: one issue, no milestone
+
+`milestones new|edit|close|reopen` queue like every other write (`M-1`, `M-2`, ... are sequential per repo, never reused, and
+resolve to the real number through `localmap.tsv` after the sync). Titles are unique per repo, ignoring case; a duplicate is
+refused. Due dates are `YYYY-MM-DD`. A title that already exists on GitHub is adopted, not created twice, and a sync that
+died half way is safe to run again. A repo with `local = true` has no sync: the same commands write the mirror directly and
+milestones get plain numbers. `<alias>/milestones.tsv` holds number, local id, title, state, due, description and update time;
+`pull` fills it from GitHub, and the open/closed counts always come from the issues. Tab completion offers titles and `M-n` ids for
+`milestones edit|close|reopen` (close: open ones, reopen: closed ones) and for `-m`.
 
 ## Local numbering
 

@@ -547,7 +547,7 @@ func (m *Model) startPick() {
 		return
 	}
 	m.pickOpts = []string{""}
-	for _, c := range completion.Milestones(m.src(), []string{it.Alias}) { // the engine's list, as the shell offers it
+	for _, c := range completion.MilestoneTitles(m.src(), []string{it.Alias}) { // the engine's list, as the shell offers it
 		m.pickOpts = append(m.pickOpts, c.Value)
 	}
 	m.comp = compState{}

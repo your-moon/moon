@@ -21,6 +21,16 @@ var helpTexts = map[string]helpEntry{
 		[2]string{"moon issues milestones -s due", "moon issues milestones -S all -j"}},
 	"milestones show": {"one milestone's progress and its issues", "moon issues milestones show <title> [--repo R] [--state open|closed|all] [--label L] [--sort ...] [--limit N]",
 		[2]string{"moon issues milestones show v1.0", "moon issues milestones show v1 -S all -s t   # a unique prefix is enough"}},
+	"milestones new": {"create a milestone (queued locally as M-<n>; sync creates it on GitHub before the issues that use it)",
+		"moon issues milestones new <title> [-d YYYY-MM-DD] [-D text | --description-file F|-] [-R repo]",
+		[2]string{"moon issues milestones new \"v1.0\" -d 2026-12-31 -D \"first public release\"", "moon issues milestones new \"auth rewrite\" --description-file plan.md -R app   # then: moon issues new -R app -m M-1 ..."}},
+	"milestones edit": {"change a milestone's title, due date or description (queued, sent by sync)",
+		"moon issues milestones edit <title|M-n> [--title T] [-d YYYY-MM-DD|none] [-D text | --description-file F|-] [-R repo]",
+		[2]string{"moon issues milestones edit v1.0 -d 2027-01-31", "moon issues milestones edit M-2 --title \"auth rewrite v2\" -d none -D \"scope cut\""}},
+	"milestones close": {"close a milestone (queued, sent by sync)", "moon issues milestones close <title|M-n> [-R repo]",
+		[2]string{"moon issues milestones close v1.0", "moon issues milestones close M-2 -R app"}},
+	"milestones reopen": {"reopen a closed milestone (queued, sent by sync)", "moon issues milestones reopen <title|M-n> [-R repo]",
+		[2]string{"moon issues milestones reopen v1.0", "moon issues milestones reopen M-2 -R app"}},
 	"prs": {"list pull requests from the mirror", "moon issues prs [--repo R] [--state open|merged|closed|all] [--since ISO] [--json]",
 		[2]string{"moon issues prs -S merged --since 2026-01-01T00:00:00Z", "moon issues prs -S all -s up -l 5"}},
 	"pr show": {"print one pull request", "moon issues pr show <ref>",
@@ -75,6 +85,7 @@ var flagHelp = map[string]string{
 	"show-status": "add the work status as a trailing column (or line) to piped output", "release": "remove them (without it, only list)",
 	"labels": "full (stored names), short (kind:/area:/triage: dropped) or none; default by terminal width",
 	"color":  "auto, always (even piped, for less -R; needs a table), never", "full": "re-read everything", "quiet": "no output",
+	"due": "due date, YYYY-MM-DD (edit: none clears it)", "description": "description text", "description-file": "read the description from a file, or - for stdin",
 }
 
 // commandNames lists what `moon issues <name>` accepts, with "pr show" as "pr".

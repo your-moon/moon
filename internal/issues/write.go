@@ -99,6 +99,9 @@ func (a *App) findByMarker(short, lid, opTS string) (int, error) {
 
 // execute runs one op. Returns the new issue number for a create, else 0.
 func (a *App) execute(op *Op) (int, error) {
+	if isMsOp(op.Op) {
+		return 0, a.executeMs(op)
+	}
 	short, ident, err := a.parseRef(op.Ref)
 	if err != nil {
 		return 0, err
@@ -225,8 +228,9 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 	badRefs, tried := map[string]bool{}, map[string]bool{}
 	for {
 		var op *Op
-		for _, o := range a.loadOutbox() {
-			if badRefs[o.Ref] || tried[o.OpID] {
+		all := a.loadOutbox()
+		for i, o := range all {
+			if badRefs[o.Ref] || tried[o.OpID] || msWaiting(all, i) {
 				continue
 			}
 			if repoFilter != "" && shortOf(o.Ref) != repoFilter {
@@ -279,6 +283,9 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 // ---------- command handlers ----------
 
 func (a *App) cmdNew(o *Opts) error {
+	if err := a.expandMsRef(o); err != nil {
+		return err
+	}
 	body, _, err := a.readBody(o)
 	if err != nil {
 		return err
@@ -375,7 +382,11 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 				args["remove"] = []any{}
 			}
 		case "milestone":
-			args["title"] = o.Pos[1]
+			t, err := a.msIssueTitle(o.Pos[0], o.Pos[1])
+			if err != nil {
+				return err
+			}
+			args["title"] = t
 		case "edit":
 			if o.Seen["title"] {
 				args["title"] = o.str("title")

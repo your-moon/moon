@@ -125,16 +125,37 @@ func plural(n int, w string) string {
 	return strconv.Itoa(n) + " " + w
 }
 
-// Milestones lists the milestone titles of the mirror (milestones.tsv, plus titles only seen on issues).
-func Milestones(s Source, aliases []string) []Candidate {
+// Milestones lists the milestone titles of the mirror (milestones.tsv, queued ones, titles only seen on issues)
+// and the local ids (M-1) of the milestones created here.
+func Milestones(s Source, aliases []string) []Candidate { return MilestonesFor(s, aliases, "", true) }
+
+// MilestoneTitles is Milestones without the M-<n> ids: what a picker shows.
+func MilestoneTitles(s Source, aliases []string) []Candidate {
+	return MilestonesFor(s, aliases, "", false)
+}
+
+// MilestonesFor is the list for one command: state "open" or "closed" keeps only milestones in that state
+// (close offers open ones, reopen closed ones); "" keeps all. ids adds the local M-<n> ids.
+func MilestonesFor(s Source, aliases []string, state string, ids bool) []Candidate {
 	seen := map[string]bool{}
 	var out []Candidate
 	for _, r := range s.Milestones() {
-		if !inAliases(r.Alias, aliases) || r.Title == "" || seen[r.Title] {
+		if !inAliases(r.Alias, aliases) || r.Title == "" || (state != "" && r.State != state) {
+			continue
+		}
+		if ids && r.LocalID != "" && !seen[r.LocalID] {
+			seen[r.LocalID] = true
+			out = append(out, Candidate{r.LocalID, "local id of " + r.Title})
+		}
+		if seen[r.Title] {
 			continue
 		}
 		seen[r.Title] = true
 		out = append(out, Candidate{r.Title, r.State + ", " + strconv.Itoa(r.Closed) + "/" + strconv.Itoa(r.Closed+r.Open) + " closed"})
+	}
+	if state != "" {
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Value < out[j].Value })
+		return out
 	}
 	for _, it := range s.Items() {
 		if it.Milestone != "" && !seen[it.Milestone] && inAliases(it.Alias, aliases) {

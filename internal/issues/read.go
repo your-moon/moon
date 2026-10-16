@@ -621,38 +621,6 @@ func (a *App) cmdClaims(o *Opts) error {
 	return nil
 }
 
-// localMilestones derives the milestone table of a local-only alias from its index rows:
-// title, state, closed count, open count, due (never set locally).
-func (a *App) localMilestones(short string) []string {
-	closed, open := map[string]int{}, map[string]int{}
-	var titles []string
-	for _, r := range a.readIndex(short) {
-		m := r[2]
-		if m == "" {
-			continue
-		}
-		if _, ok := closed[m]; !ok {
-			titles = append(titles, m)
-			closed[m] = 0
-		}
-		if r[1] == "closed" {
-			closed[m]++
-		} else {
-			open[m]++
-		}
-	}
-	sort.Strings(titles)
-	var out []string
-	for _, m := range titles {
-		st := "open"
-		if open[m] == 0 {
-			st = "closed"
-		}
-		out = append(out, fmt.Sprintf("%s\t%s\t%d\t%d\t", m, st, closed[m], open[m]))
-	}
-	return out
-}
-
 // issueFacts is the effective state and labels of an issue as the mirror (plus queued ops) has it; an issue
 // the mirror does not have counts as open with no labels.
 func (a *App) issueFacts(short, ident string, pending []*Op) (state string, labels []string) {

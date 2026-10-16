@@ -73,6 +73,12 @@ func commands() map[string]*spec {
 			read: true, run: (*App).cmdMilestones},
 		"milestones show": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
 			fl{name: "label", kind: 's'}).with(fmtFls(), issueListFls()), npos: 1, read: true, run: (*App).cmdMilestoneShow},
+		"milestones new": {fls: one(repoFl(), fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'}, fl{name: "description-file", kind: 's'}),
+			npos: 1, run: (*App).cmdMsNew},
+		"milestones edit": {fls: one(repoFl(), fl{name: "title", kind: 's'}, fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'},
+			fl{name: "description-file", kind: 's'}), npos: 1, run: (*App).cmdMsEdit},
+		"milestones close":  {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_close")(o) }},
+		"milestones reopen": {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_reopen")(o) }},
 		"prs": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "merged", "closed", "all"}, def: "open"},
 			fl{name: "since", kind: 's'}, fl{name: "json", kind: 'b'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdPRs},
 		"pr show":  {fls: one(freshFl()), npos: 1, read: true, run: (*App).cmdPRShow},
@@ -106,6 +112,7 @@ const usageText = `usage: moon issues [--config FILE] [--dir MIRROR] <command> [
 commands:
   ls [--repo R] [--state open|closed|all] [--label L] [--milestone M] [-q text]
   show <ref>                     milestones [--repo R]
+  milestones show <title>        milestones new|edit|close|reopen ...   (big work = milestone; see: moon issues help milestones new)
   prs [--repo R] [--state open|merged|closed|all] [--since ISO] [--json]
   pr show <ref>                  frontier [--repo R] [--label L] [--milestone M]
   claim <ref> --agent NAME [--ttl 120m] [--pid N]    (exit 3 = held by someone else)
@@ -132,6 +139,7 @@ Short flags (the same in every command that has the long one; they combine: -rl5
   -L --label     -m --milestone  -S --state      -R --repo   -a --agent
   -q --query     -n --no-color   -h --help
   -w --working   -i --idle       -B --labels
+  -d --due       -D --description                                       (milestones new, milestones edit)
   --sort values may be abbreviated (-s up = updated); "moon issues ls 10" shows 10 rows.
 
 moon issues <command> --help shows the options and two examples for that command.
@@ -142,7 +150,7 @@ Aliases come from [repos.<alias>] in moon.toml. Env: ISSUES_NO_AUTOSYNC, ISSUES_
 // shortMap is the one set of short flags, the same in every command that has the flag. -j and -t are
 // shortcuts for --format json / --format tsv. A command that does not have the long flag does not get the short one.
 var shortMap = map[string]string{"s": "sort", "l": "limit", "r": "reverse", "f": "format", "L": "label", "m": "milestone",
-	"S": "state", "R": "repo", "a": "agent", "n": "no-color", "w": "working", "i": "idle", "B": "labels"}
+	"S": "state", "R": "repo", "a": "agent", "n": "no-color", "w": "working", "i": "idle", "B": "labels", "d": "due", "D": "description"}
 
 // shortKey is the single letter that selects f in this command ("" if none).
 func (f fl) shortKey() string {
@@ -375,8 +383,8 @@ func Main(args []string, e Env) int {
 		if name == "pr" {
 			name = "pr show"
 		}
-		if name == "milestones" && len(rest) > 2 && rest[2] == "show" {
-			name = "milestones show"
+		if name == "milestones" && len(rest) > 2 && isMsSub(rest[2]) {
+			name = "milestones " + rest[2]
 		}
 		if _, ok := helpTexts[name]; !ok {
 			fmt.Fprint(e.Err, unknownCommand(rest[1]))
@@ -394,8 +402,8 @@ func Main(args []string, e Env) int {
 	}
 	name := rest[0]
 	rest = rest[1:]
-	if name == "milestones" && len(rest) > 0 && rest[0] == "show" {
-		name, rest = "milestones show", rest[1:]
+	if name == "milestones" && len(rest) > 0 && isMsSub(rest[0]) {
+		name, rest = "milestones "+rest[0], rest[1:]
 	}
 	if name == "pr" {
 		if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {
@@ -573,4 +581,13 @@ func spawnSync(a *App) error {
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+// isMsSub: the words that follow `moon issues milestones`.
+func isMsSub(w string) bool {
+	switch w {
+	case "show", "new", "edit", "close", "reopen":
+		return true
+	}
+	return false
 }

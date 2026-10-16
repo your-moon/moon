@@ -36,10 +36,11 @@ type CmdInfo struct {
 var posKinds = map[string][]string{
 	"show": {"ref"}, "pr show": {"ref"}, "claim": {"ref"}, "release": {"ref"}, "comment": {"ref"}, "close": {"ref"},
 	"reopen": {"ref"}, "label": {"ref"}, "edit": {"ref"}, "milestone": {"ref", "milestone"}, "milestones show": {"milestone"},
+	"milestones new": {"text"}, "milestones edit": {"milestone"}, "milestones close": {"milestone"}, "milestones reopen": {"milestone"},
 }
 
 var valueKinds = map[string]string{"repo": "repo", "label": "label", "add": "label", "remove": "label", "milestone": "milestone",
-	"body-file": "file", "limit": "number", "status": "status"}
+	"body-file": "file", "limit": "number", "status": "status", "due": "date", "description-file": "file"}
 
 // GlobalFlags are the options `moon issues` takes before the command.
 func GlobalFlags() []FlagInfo {

@@ -64,7 +64,7 @@ const issueFields = `number title body state stateReason url createdAt updatedAt
 var qIssues = `query($owner:String!,$name:String!,$since:DateTime,$after:String,$withMs:Boolean!){
  repository(owner:$owner,name:$name){
   labels(first:100) @include(if:$withMs){nodes{name color description}}
-  milestones(first:100,states:[OPEN,CLOSED]) @include(if:$withMs){nodes{title state dueOn closed:issues(states:CLOSED){totalCount} open:issues(states:OPEN){totalCount}}}
+  milestones(first:100,states:[OPEN,CLOSED]) @include(if:$withMs){nodes{number title state dueOn description updatedAt}}
   issues(first:100,after:$after,orderBy:{field:UPDATED_AT,direction:ASC},filterBy:{since:$since}){
    pageInfo{hasNextPage endCursor}
    nodes{` + issueFields + `}}}}`
@@ -592,15 +592,12 @@ func (a *App) pull(short string, full bool) (int, error) {
 				} `json:"labels"`
 				Milestones struct {
 					Nodes []struct {
-						Title  string  `json:"title"`
-						State  string  `json:"state"`
-						DueOn  *string `json:"dueOn"`
-						Closed struct {
-							TotalCount int `json:"totalCount"`
-						} `json:"closed"`
-						Open struct {
-							TotalCount int `json:"totalCount"`
-						} `json:"open"`
+						Number      int     `json:"number"`
+						Title       string  `json:"title"`
+						State       string  `json:"state"`
+						DueOn       *string `json:"dueOn"`
+						Description string  `json:"description"`
+						UpdatedAt   string  `json:"updatedAt"`
 					} `json:"nodes"`
 				} `json:"milestones"`
 				Issues struct {
@@ -627,15 +624,17 @@ func (a *App) pull(short string, full bool) (int, error) {
 			}
 		}
 		if first {
-			var ms strings.Builder
+			var recs []msRec
+			ids := a.msLocalIDs(short)
 			for _, m := range data.Repository.Milestones.Nodes {
 				due := ""
 				if m.DueOn != nil {
-					due = *m.DueOn
+					due = dueDate(*m.DueOn)
 				}
-				fmt.Fprintf(&ms, "%s\t%s\t%d\t%d\t%s\n", strings.ReplaceAll(m.Title, "\t", " "), strings.ToLower(m.State), m.Closed.TotalCount, m.Open.TotalCount, due)
+				recs = append(recs, msRec{Number: m.Number, LocalID: ids[m.Number], Title: m.Title, State: strings.ToLower(m.State), Due: due,
+					Desc: pyStrip(opMarkerRe.ReplaceAllString(m.Description, "")), Updated: m.UpdatedAt})
 			}
-			if err := a.withLock(".pull.lock", func() error { return atomicWrite(filepath.Join(d, "milestones.tsv"), ms.String(), false) }); err != nil {
+			if err := a.withLock(".pull.lock", func() error { return a.writeMsFile(short, recs) }); err != nil {
 				return changed, err
 			}
 		}
