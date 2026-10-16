@@ -33,7 +33,7 @@ const zshTmpl = `#compdef {{.Prog}}
 _{{.Prog}}() {
   local -a out vals disp
   local line dir v d
-  out=("${(@f)$("${words[1]}" __complete "${(@Q)words[2,CURRENT]}" 2>/dev/null)}")
+  out=("${(@f)$("${words[1]}" __complete "${(@Q)words[2,CURRENT-1]}" "${(Q)IPREFIX}${(Q)PREFIX}" 2>/dev/null)}")
   (( ${#out} )) || return 1
   dir=${out[-1]#:}
   out[-1]=()
