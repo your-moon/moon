@@ -99,13 +99,13 @@ func TestClaimsTab(t *testing.T) {
 	if !strings.Contains(fresh, "robin") || !strings.Contains(fresh, "10m") || !strings.Contains(fresh, "2h") {
 		t.Fatalf("fresh row lacks agent, age or ttl: %q", fresh)
 	}
-	if strings.Contains(fresh, "\x1b[2m") || strings.Contains(fresh, "STALE") {
+	if strings.Contains(fresh, "\x1b[2m") || strings.Contains(fresh, "stale") {
 		t.Fatalf("fresh row must not be dimmed: %q", fresh)
 	}
-	if !strings.Contains(stale, "STALE") || !strings.Contains(stale, "\x1b[2m") {
-		t.Fatalf("stale row must be dimmed and say STALE: %q", stale)
+	if !strings.Contains(stale, "stale") || !strings.Contains(stale, "! app#7") || !strings.Contains(stale, "\x1b[2m") {
+		t.Fatalf("stale row must be dimmed, marked ! and say stale: %q", stale)
 	}
-	if !strings.Contains(s.View(), "2 claims, 1 stale") {
+	if !strings.Contains(s.View(), "2 claims, 1 stale, 0 on closed issues") {
 		t.Fatalf("summary missing:\n%s", s.View())
 	}
 	// same data as `moon issues claims`

@@ -21,6 +21,7 @@ type Config struct {
 	Dir       string // directory holding moon.toml
 	MirrorDir string // absolute
 	Repos     []Repo // in file order
+	Colors    ColorConfig
 }
 
 var aliasRe = regexp.MustCompile(`^[a-z0-9_]+$`)
@@ -86,6 +87,7 @@ Create one, for example:
 //	[repos.<alias>]
 //	github = "owner/name"         # exactly one of github or local = true
 //	local = true                  # local-only tracker, never synced
+//	[colors]                      # optional: theme = "light"|"dark", and any role = "#rrggbb" or an ANSI name
 func LoadConfig(path string) (*Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -99,6 +101,7 @@ func LoadConfig(path string) (*Config, error) {
 	c := &Config{Dir: filepath.Dir(abs)}
 	mirror := ""
 	var cur *Repo
+	inColors := false
 	flush := func() error {
 		if cur == nil {
 			return nil
@@ -125,8 +128,13 @@ func LoadConfig(path string) (*Config, error) {
 			if err := flush(); err != nil {
 				return nil, err
 			}
+			inColors = false
+			if line == "[colors]" {
+				inColors = true
+				continue
+			}
 			if !strings.HasSuffix(line, "]") || !strings.HasPrefix(line, "[repos.") {
-				return nil, fmt.Errorf("%s:%d: unsupported table %s (want [repos.<alias>])", path, n, line)
+				return nil, fmt.Errorf("%s:%d: unsupported table %s (want [repos.<alias>] or [colors])", path, n, line)
 			}
 			alias := strings.TrimSuffix(strings.TrimPrefix(line, "[repos."), "]")
 			if !aliasRe.MatchString(alias) {
@@ -145,6 +153,15 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s:%d: want key = \"value\"", path, n)
 		}
 		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if inColors {
+			if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' {
+				return nil, fmt.Errorf("%s:%d: value of %s must be a quoted string", path, n, k)
+			}
+			if err := c.Colors.Set(k, v[1:len(v)-1]); err != nil {
+				return nil, fmt.Errorf("%s:%d: %v", path, n, err)
+			}
+			continue
+		}
 		if cur != nil && k == "local" {
 			if v != "true" && v != "false" {
 				return nil, fmt.Errorf("%s:%d: local must be true or false (unquoted), got %s", path, n, v)

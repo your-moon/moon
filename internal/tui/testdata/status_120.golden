@@ -1,0 +1,24 @@
+  REF    STATE  STATUS    LABELS                TITLE                   │ app#9  open
+> app#9  open   blocked   kind:bug +4           checkout: card form los…│ checkout: card form loses focus after the
+  app#8  open   blocked   kind:feature +1       export: which CSV diale…│ redirect
+@ app#6  open   working   kind:bug,area:auth    auth: refresh token loo…│
+  app#5  open   in review kind:feature          export: add CSV download│ labels: kind:bug, area:payments-gateway,
+  app#4  open   ready     kind:bug,triage:ready docs: explain config lo…│         triage:needs-information,
+  app#3  open   stale     -                     chore: bump the linter  │         customer-reported, priority-high
+                                                                        │ milestone: v2
+                                                                        │ author: sam
+                                                                        │ claim: none
+                                                                        │ status: blocked
+                                                                        │ ──────────────────────────────────────────────
+                                                                        │ Steps are in the first comment.
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  x close  m comment  ? help  q quit
+6/7  state:open  sort:number↓  labels:full  |  mirror pulled 5 min ago

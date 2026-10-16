@@ -63,6 +63,7 @@ const issueFields = `number title body state stateReason url createdAt updatedAt
 
 var qIssues = `query($owner:String!,$name:String!,$since:DateTime,$after:String,$withMs:Boolean!){
  repository(owner:$owner,name:$name){
+  labels(first:100) @include(if:$withMs){nodes{name color description}}
   milestones(first:100,states:[OPEN,CLOSED]) @include(if:$withMs){nodes{title state dueOn closed:issues(states:CLOSED){totalCount} open:issues(states:OPEN){totalCount}}}
   issues(first:100,after:$after,orderBy:{field:UPDATED_AT,direction:ASC},filterBy:{since:$since}){
    pageInfo{hasNextPage endCursor}
@@ -582,6 +583,13 @@ func (a *App) pull(short string, full bool) (int, error) {
 	for {
 		var data struct {
 			Repository struct {
+				Labels *struct {
+					Nodes []struct {
+						Name        string  `json:"name"`
+						Color       string  `json:"color"`
+						Description *string `json:"description"`
+					} `json:"nodes"`
+				} `json:"labels"`
 				Milestones struct {
 					Nodes []struct {
 						Title  string  `json:"title"`
@@ -604,6 +612,19 @@ func (a *App) pull(short string, full bool) (int, error) {
 		vars := map[string]any{"owner": owner, "name": name, "since": since, "after": after, "withMs": first}
 		if err := a.gql(qIssues, vars, &data); err != nil {
 			return changed, err
+		}
+		if first && data.Repository.Labels != nil {
+			var lb strings.Builder // name, colour hex, description: what the table needs to draw a label chip
+			for _, l := range data.Repository.Labels.Nodes {
+				desc := ""
+				if l.Description != nil {
+					desc = *l.Description
+				}
+				fmt.Fprintf(&lb, "%s\t%s\t%s\n", clean(l.Name), clean(l.Color), clean(desc))
+			}
+			if err := a.withLock(".pull.lock", func() error { return atomicWrite(filepath.Join(d, "labels.tsv"), lb.String(), false) }); err != nil {
+				return changed, err
+			}
 		}
 		if first {
 			var ms strings.Builder

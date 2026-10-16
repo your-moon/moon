@@ -1,11 +1,12 @@
-  REF    STATE  MILESTONE  LABELS           TITLE                       │ app#5  open
-  app#7  open   v1         feature,area::a… auth: add passkey support   │ widget: renders blank for ünïcode and 日本語
-> app#5  open   v2         bug              widget: renders blank for ü…│ titles
-  app#4  open              docs             docs: explain config lookup │
-  app#3  open   v2         feature          export: add CSV download    │ labels: bug
-@ app#2  open   v1         bug,area::auth   auth: token refresh loops   │ milestone: v2
+  REF    STATE  STATUS  LABELS             TITLE                        │ app#5  open
+  app#7  open   open    area::auth,feature auth: add passkey support    │ widget: renders blank for ünïcode and 日本語
+> app#5  open   open    bug                widget: renders blank for ün…│ titles
+  app#4  open   open    docs               docs: explain config lookup  │
+  app#3  open   open    feature            export: add CSV download     │ labels: bug
+@ app#2  open   working area::auth,bug     auth: token refresh loops    │ milestone: v2
                                                                         │ author: sam
                                                                         │ claim: none
+                                                                        │ status: open
                                                                         │ ──────────────────────────────────────────────
                                                                         │
                                                                         │
@@ -25,6 +26,5 @@
                                                                         │
                                                                         │
                                                                         │
-                                                                        │
-j/k move  / search  s sort  f filter  c claim  u release  x close  m comment  ? help  q quit
-5/7  state:open  sort:number↓  |  mirror pulled 5 min ago
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  x close  m comment  ? help  q quit
+5/7  state:open  sort:number↓  labels:full  |  mirror pulled 5 min ago

@@ -49,6 +49,9 @@ func (g ExecGH) Run(args []string, stdin string, timeout time.Duration) (string,
 		return "", &GhError{fmt.Sprintf("timeout after %ds: gh %s", int(timeout.Seconds()), strings.Join(n, " ")), true}
 	}
 	if err != nil {
+		if _, exited := err.(*exec.ExitError); !exited { // gh itself never ran: missing, or not executable
+			return "", &GhError{Msg: "could not run gh (set ISSUES_GH or install the GitHub CLI)"}
+		}
 		m := trunc(pyStrip(se.String()+so.String()), 500)
 		if m == "" {
 			code := -1

@@ -44,16 +44,16 @@ tab-separated text as always, so scripts and agents are unaffected. `--format ta
 
 Every flag has a short form, the same in every command: `-s --sort`, `-l --limit`, `-r --reverse`, `-f --format`
 (`-j` = json, `-t` = tsv), `-L --label`, `-m --milestone`, `-S --state`, `-R --repo`, `-a --agent`, `-q --query`,
-`-n --no-color`, `-h --help`. They combine (`-rl5`), take `-l5`, `-l 5` or `--limit=5`, and `--sort` values can be
+`-n --no-color`, `-w --working`, `-i --idle`, `-B --labels`, `-h --help`. They combine (`-rl5`), take `-l5`, `-l 5` or `--limit=5`, and `--sort` values can be
 abbreviated (`-s up` is `updated`). The long forms keep working.
 
-A sample of `moon issues ls`:
+A sample of `moon issues ls` (120 columns; labels shrink to short names on narrower terminals):
 
-    REF     STATE   CLAIM  LABELS             TITLE
-    app#12  open    -      bug,area:ui        login: button does nothing on Safari when the session coo…
-    app#9   open    alice  feature            export: add CSV download
-    app#8   open    -      cleanup,area:docs  docs: quickstart mentions a removed flag
-    app#5   closed  -      bug                search: slow on big projects
+    REF     STATE   STATUS              LABELS                  TITLE
+    app#12  open    in review: PR #31   kind:bug,area:ui        login: button does nothing on Safari when the session cookie has…
+    app#9   open    working: alice 11m  kind:feature            export: add CSV download
+    app#8   open    open                kind:cleanup,area:docs  docs: quickstart mentions a removed flag
+    app#5   closed  done (stale claim)  kind:bug                search: slow on big projects
     showing 4 of 4
 
 and of `moon issues milestones` (the footer goes to stderr, so pipes stay clean; ASCII bars when colour is off):
@@ -67,9 +67,88 @@ Sorting: `--sort number|updated|created|title` (`-s`) and `-r` on `ls`, `frontie
 `due|progress|title|open`). Percentages round down, so 99.6% reads 99 and only a finished milestone shows 100.
 `--milestone` accepts a case-insensitive title or a unique prefix. A typo gets "did you mean ...".
 
+## Work status
+
+Every issue has a derived work status, shown in `ls`, `frontier`, `show`, `claims` and the TUI. Nothing is stored: it is
+computed from the issue (state, labels), its claim and the open pull requests in the mirror, so it cannot go stale the way a
+claim file does (an agent that finished and never released its claim no longer looks like it is working). The first rule that
+matches wins:
+
+| Status | When | Shown as |
+|---|---|---|
+| `done` | the issue is closed (a claim still on file shows `done (stale claim)` and is listed by `sweep`) | `done` |
+| `in review` | an open PR in the mirror says `Closes`, `Fixes` or `Resolves #N` (any case; `alias#N` or `owner/name#N` for this repo; GitHub's own closing references too). Other repos' references and the PR's branch name do not count | `in review: PR #588` |
+| `working` | a fresh claim: inside its TTL and, when a pid was recorded on this host, that process is alive | `working: sonnet-17 11m` |
+| `stale` | a claim past its TTL, or whose recorded pid on this host is gone: needs a look | `stale: haiku 2h41m` |
+| `blocked` | a label containing `blocked`, `needs-decision` or `needs-information`, and no fresh claim | `blocked` |
+| `ready` | open, no claim, label `ready` or `<prefix>:ready` | `ready` |
+| `open` | everything else | `open` |
+
+The table is data (`WorkRules` in `internal/issues/work.go`): a project can reorder it. `WorkStatus` is one pure function,
+unit-tested for every transition and the priority order.
+
+    moon issues ls -w                  # only working
+    moon issues ls -i                  # idle: ready or open, nobody on it
+    moon issues ls --status stale,blocked      # any of: stale working in-review blocked ready open done
+    moon issues ls -s status           # stale first, then working, in review, blocked, ready, open, done
+    moon issues claims                 # STATE is the same word; a claim on a closed issue says "done (stale claim)"
+    moon issues sweep                  # list claims that are stale or on closed issues (dry run)
+    moon issues sweep --release        # release them; a fresh claim on an open issue is never touched
+
+`-w`, `-i` and `--status` add up (`-w -i` is working or idle). Piped output keeps its exact bytes; a trailing status column
+(or, for `show`, a `status:` line right after `claim:`) is added only when you ask: `--show-status`, `-w`, `-i`,
+`--status`, or `-s status`. On a terminal the STATUS column is coloured (working green, in review blue, stale yellow,
+blocked red, done dim). `frontier` still means open issues with no fresh claim. A frozen sample (invented data):
+
+    REF     STATE   STATUS                  LABELS                              TITLE
+    app#31  open    blocked                 kind:bug,area:payments-gateway +3   checkout: card form loses focus after the 3…
+    app#29  closed  done (stale claim)      kind:bug,area:auth                  login: crash on empty password
+    app#28  open    working: sonnet-17 11m  kind:bug,area:auth                  auth: refresh token loops
+    app#27  open    in review: PR #61       kind:feature,area:web               export: add CSV download
+    app#26  open    ready                   kind:bug,triage:ready               docs: explain config lookup
+    app#25  open    stale: haiku 2h41m      kind:cleanup                        chore: bump the linter
+
+## Labels
+
+The LABELS column is as wide as the widest label list on screen, at most 45 percent of the terminal; the title gives way
+first. A label is never cut mid-name: what does not fit is dropped whole from the end and counted, `kind:bug,area:web +2`.
+Labels are ordered `kind:*`, `area:*`, `triage:*`, then the rest alphabetically (piped output keeps the stored order).
+`show` and the TUI detail pane list every label in full, wrapped.
+
+`-B/--labels full|short|none` picks the display: `full` is the stored names, `short` drops the `kind:`, `area:` and `triage:`
+prefixes and collapses `::`, `none` hides the column. The default follows the terminal: full from 110 columns, short from
+70, none below. What is shown is what `-L/--label` accepts: the stored name (`kind:bug`), the shown name (`bug`), or any
+unique suffix after a colon (`ready` matches `triage:ready`). If two labels end the same way the command prints the
+candidates and exits 2.
+
+## Colour
+
+Colour is only for tables and the TUI; piped, TSV and JSON output never contain an escape code. It is off for `NO_COLOR`,
+`-n/--no-color`, `--color never`, `TERM=dumb` and when stdout is not a terminal. `--color always` forces it and prints the
+table even when piped (`moon issues ls --color always | less -R`; it beats `NO_COLOR`, and `--no-color` beats it);
+`CLICOLOR_FORCE=1` enables colour for tables without changing what a pipe prints. Depth: truecolor when `COLORTERM` is
+`truecolor`/`24bit`, 256 colours when `TERM` says `256color`, else the 16 basic colours; every colour has a fallback at each depth.
+
+Colours are roles, not escapes: `state-open state-closed state-merged`, `status-working status-review status-stale
+status-blocked status-ready status-done`, `label-kind label-area label-triage label-other`, `bar-low bar-mid bar-high
+bar-empty` (milestone bars: red under 25 percent, yellow 25-74, green 75 and up), `claim-fresh claim-stale muted accent
+warning error`, each with a dark and a light value. The theme is `MOON_THEME=light|dark`, else the config, else
+`COLORFGBG`, else dark. The TUI builds its styles from the same palette. Labels are drawn as chips in their GitHub colour
+(`pull` also saves `<alias>/labels.tsv`: name, colour, description), with black or white text chosen by WCAG contrast; a label
+with no known colour gets a fixed colour from its prefix. Optional overrides in `moon.toml`, validated at load:
+
+    [colors]
+    theme = "light"                  # or "dark"
+    status-working = "#2da44e"       # a #rrggbb colour ...
+    state-closed = "red"             # ... or an ANSI name (black red green yellow blue magenta cyan white, bright-<name>, gray)
+    bar-fill = "#0969da"             # sets bar-low, bar-mid and bar-high at once
+
+A bad key or value fails with the file, line and key (`moon.toml:7: [colors] unknown key "stat-working" (did you mean status-working?)`).
+Only the first 100 labels of a repo are fetched for colours.
+
 ## Commands
 
-`ls show milestones prs pr show frontier claim release claims status new comment close reopen label milestone edit push pull sync prune`,
+`ls show milestones prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune`,
 `tui` (also `moon tui`, see Terminal UI), plus `moon version`. Run `moon issues help` for the flags. Run `moon tui` for the interactive dashboard. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
 mirror older than 10 minutes, `ISSUES_KEEP_DAYS` (default 30) is how long closed items keep their file, `ISSUES_GH` points at another `gh` binary.
 
@@ -100,10 +179,10 @@ reopen edit status`) works as for a GitHub repo, with the same on-disk layout.
     moon tui                 # dashboard: Issues, Milestones, Claims
     moon issues tui          # the same dashboard, opened on the Issues tab
 
-Flags: `--config FILE`, `--dir MIRROR`, `--agent NAME` (claim holder, default `$USER`). The config is found the same way as for
+Flags: `--config FILE`, `--dir MIRROR`, `--agent NAME` (claim holder, default `$USER`), `--color auto|always|never`, `--no-color`. The config is found the same way as for
 `moon issues`; if none is found the screen lists the four places searched. It reads the local mirror only. Writes (`c u x m M`) are
-queued locally through the same code as the CLI, and the footer shows `queued: N`. There is no push, pull or sync in the UI: run
-`moon issues sync` yourself. `NO_COLOR` is respected (plain text, ASCII progress bars). Mouse wheel scrolls, a click selects.
+queued locally through the same code as the CLI, and the footer shows `queued: N ops` (operations, not issues: two ops on one issue read 2). There is no push, pull or sync in the UI: run
+`moon issues sync` yourself. `NO_COLOR` is respected (plain text, ASCII progress bars); colours come from the palette above. Mouse wheel scrolls, a click selects.
 Under 100 columns the detail stacks under the list; under 60 columns only the list shows and `enter` opens the detail.
 
 | Key | Action |
@@ -111,7 +190,9 @@ Under 100 columns the detail stacks under the list; under 60 columns only the li
 | `1`-`9`, `[` `]` | switch tab |
 | `j` `k`, arrows, `g` `G`, `pgup` `pgdn` | move |
 | `/` | live search, the same match as `ls -q` (title or labels); `esc` clears |
-| `s`, `r` | cycle sort (number, updated, created, title), reverse |
+| `s`, `r` | cycle sort (number, updated, created, title, status), reverse |
+| `w` | only issues being worked on now (status working); again for all |
+| `l` | labels column: full, short, hidden (the footer shows the mode; default by width: full from 110, short from 70) |
 | `f` | filter menu: state, label, milestone, clear |
 | `tab` | next repo alias, when there are several |
 | `enter`, `esc` | open the detail full screen, go back |
@@ -122,41 +203,52 @@ Under 100 columns the detail stacks under the list; under 60 columns only the li
 | `?`, `q` | help, quit |
 
 Milestones tab: `enter` opens the Issues tab filtered to that milestone (`esc` clears the chip), `s` cycles due, progress, title and open
-count, `x` hides fully closed milestones. Claims tab: the same data as `moon issues claims`, stale claims dimmed.
+count, `x` hides fully closed milestones. Claims tab: the same data as `moon issues claims` (STATE is the status word), with a `!` marker and dimming on claims that are stale or sit on a closed issue; `moon issues sweep --release` clears them.
+The Issues list has a STATUS column (`done!` = closed but still claimed), the detail pane a `status:` line after `claim:`. (`l` now cycles labels; it no longer opens the detail, `enter` and the right arrow still do.)
 
-Issues tab at 80 columns (invented data):
+Issues tab at 120 and 80 columns (invented data; colours not shown):
 
 ```
-  REF    STATE  MILESTONE  LABELS           TITLE
-  app#7  open   v1         feature,area::a… auth: add passkey support
-> app#5  open   v2         bug              widget: renders blank for ünïcode a…
-  app#4  open              docs             docs: explain config lookup
-  app#3  open   v2         feature          export: add CSV download
-@ app#2  open   v1         bug,area::auth   auth: token refresh loops
-────────────────────────────────────────────────────────────────────────────────
- app#5  open
- widget: renders blank for ünïcode and 日本語 titles
+[1 Issues]  2 Milestones   3 Claims
+  REF    STATE  STATUS    LABELS                         TITLE          │ app#31  open
+> app#31 open   blocked   kind:bug +4                    checkout: card…│ checkout: card form loses focus after the 3-D
+  app#30 open   blocked   kind:feature +1                export: which …│ secure redirect
+@ app#28 open   working   kind:bug,area:auth             auth: refresh …│
+  app#27 open   in review kind:feature,area:web          export: add CS…│ labels: kind:bug, area:payments-gateway,
+  app#26 open   ready     kind:bug,triage:ready          docs: explain …│         triage:needs-information,
+  app#25 open   stale     kind:cleanup                   chore: bump th…│         customer-reported, priority-high
+  app#24 open   ready     kind:bug,area:web,triage:ready search: slow o…│ milestone: -
+                                                                        │ author: sam
+                                                                        │ claim: none
+                                                                        │ status: blocked
+                                                                        │ ──────────────────────────────────────────────
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  x close  m comment  ? help  q quit
+7/8  state:open  sort:number↓  labels:full  |  mirror pulled 0 min ago
+```
 
- labels: bug
- milestone: v2
+```
+[1 Issues]  2 Milestones   3 Claims
+  REF    STATE  STATUS    LABELS                  TITLE
+> app#31 open   blocked   bug,payments-gateway +3 checkout: card form loses foc…
+  app#30 open   blocked   feature,needs-decision  export: which CSV dialect do …
+@ app#28 open   working   bug,auth                auth: refresh token loops
+  app#27 open   in review feature,web             export: add CSV download
+  app#26 open   ready     bug,ready               docs: explain config lookup
+  app#25 open   stale     cleanup                 chore: bump the linter
+  app#24 open   ready     bug,web,ready           search: slow on big projects
+────────────────────────────────────────────────────────────────────────────────
+ app#31  open
+ checkout: card form loses focus after the 3-D secure redirect
+ labels: kind:bug, area:payments-gateway, triage:needs-information,
+         customer-reported, priority-high
+ milestone: -
  author: sam
  claim: none
+ status: blocked
  ───────────────────────────────────────────────────────────────────────────────
-
-
-
-
-
-
-
-
-
-
-
-
-
-j/k move  / search  s sort  f filter  c claim  u release  x close  m comment  ?…
-5/7  state:open  sort:number↓  |  mirror pulled 5 min ago
+ Steps are in the first comment.
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  …
+7/8  state:open  sort:number↓  labels:short  |  mirror pulled 1 min ago
 ```
 
 Milestones tab:

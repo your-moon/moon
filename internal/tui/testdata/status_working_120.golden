@@ -1,0 +1,24 @@
+  REF    STATE  STATUS  LABELS             TITLE                        │ app#6  open
+> app#6  open   working kind:bug,area:auth auth: refresh token loops    │ auth: refresh token loops
+                                                                        │
+                                                                        │ labels: kind:bug, area:auth
+                                                                        │ milestone: v1
+                                                                        │ author: sam
+                                                                        │ claim: sonnet-17 on box, 11m ago
+                                                                        │ status: working: sonnet-17 11m
+                                                                        │ ──────────────────────────────────────────────
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  x close  m comment  ? help  q quit
+1/7  state:open  sort:number↓  status:working  labels:full  |  mirror pulled 5 min ago

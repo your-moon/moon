@@ -1,0 +1,24 @@
+  REF    STATE  STATUS    LABELS                  TITLE
+> app#9  open   blocked   bug,payments-gateway +3 checkout: card form loses foc…
+  app#8  open   blocked   feature,needs-decision  export: which CSV dialect do …
+@ app#6  open   working   bug,auth                auth: refresh token loops
+  app#5  open   in review feature                 export: add CSV download
+  app#4  open   ready     bug,ready               docs: explain config lookup
+  app#3  open   stale     -                       chore: bump the linter
+────────────────────────────────────────────────────────────────────────────────
+ app#9  open
+ checkout: card form loses focus after the redirect
+
+ labels: kind:bug, area:payments-gateway, triage:needs-information,
+         customer-reported, priority-high
+ milestone: v2
+ author: sam
+ claim: none
+ status: blocked
+ ───────────────────────────────────────────────────────────────────────────────
+ Steps are in the first comment.
+
+
+
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  …
+6/7  state:open  sort:number↓  labels:short  |  mirror pulled 5 min ago

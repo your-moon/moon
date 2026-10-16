@@ -71,16 +71,39 @@ func (a *App) utf8Locale() bool {
 	return false
 }
 
+// barRender draws the filled part in the percent role and the empty part muted.
+func (a *App) barRender(m ms) func(*Styler) string {
+	return func(st *Styler) string { return a.barParts(m, st) }
+}
+
+func (a *App) barText(m ms) string { return a.barParts(m, a.styler()) }
+
+func (a *App) barParts(m ms, st *Styler) string {
+	b := a.bar(m)
+	if st == nil || !st.On {
+		return b
+	}
+	n := 0
+	for _, r := range b {
+		if r == '█' || r == '#' {
+			n++
+		}
+	}
+	r := []rune(b)
+	// find the end of the filled run (after an optional leading "[")
+	lead := 0
+	if len(r) > 0 && r[0] == '[' {
+		lead = 1
+	}
+	fill, rest := string(r[:lead+n]), string(r[lead+n:])
+	return st.P(BarRole(m.pct()), fill) + st.P("bar-empty", rest)
+}
+
 func (a *App) bar(m ms) string {
 	return bar(m.closed, m.total(), a.barWidth(), a.Color && a.utf8Locale())
 }
 
-func (a *App) progressColor(m ms) string {
-	if m.total() > 0 && m.open == 0 {
-		return cGreen
-	}
-	return cYellow
-}
+func (a *App) progressColor(m ms) string { return BarRole(m.pct()) }
 
 func (a *App) cmdMilestones(o *Opts) error {
 	v := a.resolveView(o, true)
@@ -162,7 +185,7 @@ func (a *App) milestoneTable(rows []ms) string {
 		if len(m.due) >= 10 {
 			due, dc = m.due[:10], ""
 			if m.state == "open" && due < today {
-				dc = cRed
+				dc = "error"
 			}
 		}
 		c := []cell{}
@@ -170,11 +193,11 @@ func (a *App) milestoneTable(rows []ms) string {
 			c = append(c, plain(m.repo))
 		}
 		pc := a.progressColor(m)
-		c = append(c, plain(m.title), cell{a.bar(m), pc}, plain(fmt.Sprintf("%d/%d", m.closed, m.total())), cell{fmt.Sprintf("%d%%", m.pct()), pc},
-			plain(strconv.Itoa(m.open)), cell{due, dc})
+		c = append(c, plain(m.title), cell{s: a.bar(m), color: pc, render: a.barRender(m)}, plain(fmt.Sprintf("%d/%d", m.closed, m.total())), cell{s: fmt.Sprintf("%d%%", m.pct()), color: pc},
+			plain(strconv.Itoa(m.open)), cell{s: due, color: dc})
 		cells[i] = c
 	}
-	return renderTable(cols, cells, a.Width, a.Color)
+	return renderTable(cols, cells, a.Width, a.styler())
 }
 
 // stableSort orders by less (ties keep their order, also when reversed); with plainReverse it just flips the list.
@@ -284,7 +307,7 @@ func (a *App) resolveMilestone(o *Opts) error {
 
 func (a *App) cmdMilestoneShow(o *Opts) error {
 	o.S["milestone"] = o.Pos[0]
-	if err := a.resolveMilestone(o); err != nil {
+	if err := a.resolveFilters(o); err != nil {
 		return err
 	}
 	rows := a.collect(o, o.str("state"), "")
@@ -297,12 +320,12 @@ func (a *App) cmdMilestoneShow(o *Opts) error {
 			}
 		}
 		for _, m := range hit {
-			a.println(paint(a.Color, cBold, m.title) + "  " + paint(a.Color, stateColor(m.state), m.state) + "  (" + m.repo + ")")
+			a.println(a.P(cBold, m.title) + "  " + a.P(stateColor(m.state), m.state) + "  (" + m.repo + ")")
 			due := "no due date"
 			if len(m.due) >= 10 {
 				due = "due " + m.due[:10]
 			}
-			a.printf("%s  %d/%d closed · %d%% · %d open · %s\n\n", paint(a.Color, a.progressColor(m), a.bar(m)), m.closed, m.total(), m.pct(), m.open, due)
+			a.printf("%s  %d/%d closed · %d%% · %d open · %s\n\n", a.barText(m), m.closed, m.total(), m.pct(), m.open, due)
 		}
 	}
 	return a.listRows(o, rows)

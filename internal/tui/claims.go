@@ -31,9 +31,11 @@ func NewClaimsTab(st ClaimsStore) Tab {
 	return &claimsTab{st: st, rows: st.Claims()}
 }
 
-func (t *claimsTab) Title() string   { return "Claims" }
-func (t *claimsTab) Init() tea.Cmd   { return nil }
-func (t *claimsTab) Keys() string    { return "j/k move  r reload  q quit" }
+func (t *claimsTab) Title() string { return "Claims" }
+func (t *claimsTab) Init() tea.Cmd { return nil }
+func (t *claimsTab) Keys() string {
+	return "j/k move  r reload  q quit   ! = stale, or its issue is closed (moon issues sweep)"
+}
 func (t *claimsTab) Capturing() bool { return false }
 
 func (t *claimsTab) vis() int {
@@ -96,24 +98,28 @@ func (t *claimsTab) View() string {
 		hoW = max(hoW, len(oneLine(r.Host)))
 	}
 	agW, hoW = min(agW, 20), min(hoW, 20)
+	stW := 5
+	for _, r := range t.rows {
+		stW = max(stW, len(r.Work.Word()))
+	}
 	line := func(mark, ref, st, ag, ho, pid, ageS, ttl string) string {
-		return fmt.Sprintf("%s %s %s %s %s %s %s %s", mark, fit(ref, refW), fit(st, 5), fit(ag, agW), fit(ho, hoW), fit(pid, 7), fit(ageS, 6), fit(ttl, 6))
+		return fmt.Sprintf("%s %s %s %s %s %s %s %s", mark, fit(ref, refW), fit(st, stW), fit(ag, agW), fit(ho, hoW), fit(pid, 7), fit(ageS, 6), fit(ttl, 6))
 	}
 	lines := []string{stHead.Render(fit(line(" ", "REF", "STATE", "AGENT", "HOST", "PID", "AGE", "TTL"), t.w))}
 	if len(t.rows) == 0 {
 		lines = append(lines, "", "  No claims. Claim an issue with c in the Issues tab.")
 	}
-	stale := 0
+	stale, closed := 0, 0
 	for i := t.top; i < len(t.rows) && i < t.top+t.vis(); i++ {
 		r := t.rows[i]
-		pid, st := "-", "fresh"
+		pid, st := "-", r.Work.Word()
 		if r.Pid != 0 {
 			pid = fmt.Sprint(r.Pid)
 		}
-		if r.Stale {
-			st = "STALE"
-		}
 		mark := " "
+		if r.Stale || r.IssueClosed {
+			mark = "!"
+		}
 		if i == t.cur {
 			mark = ">"
 		}
@@ -121,7 +127,7 @@ func (t *claimsTab) View() string {
 		switch {
 		case i == t.cur:
 			s = stSel.Render(s)
-		case r.Stale:
+		case r.Stale || r.IssueClosed:
 			s = stDim.Render(s)
 		}
 		lines = append(lines, s)
@@ -130,13 +136,16 @@ func (t *claimsTab) View() string {
 		if r.Stale {
 			stale++
 		}
+		if r.IssueClosed {
+			closed++
+		}
 	}
 	body := t.h - footerLines
 	for len(lines) < body {
 		lines = append(lines, "")
 	}
 	lines = lines[:max(body, 1)]
-	lines = append(lines, stDim.Render(fit(t.Keys(), t.w)), fit(fmt.Sprintf("%d claims, %d stale", len(t.rows), stale), t.w))
+	lines = append(lines, stDim.Render(fit(t.Keys(), t.w)), fit(fmt.Sprintf("%d claims, %d stale, %d on closed issues", len(t.rows), stale, closed), t.w))
 	for i, l := range lines {
 		if lipgloss.Width(l) > t.w {
 			l = ansi.Truncate(l, t.w, "")

@@ -12,23 +12,12 @@ import (
 
 const defaultWidth = 100
 
+// Colour roles used with the Styler (see color.go). cBold and cDim are the two that are not palette colours
+// in name only: bold is an attribute, dim is the muted role.
 const (
-	cBold    = "1"
-	cDim     = "2"
-	cRed     = "31"
-	cGreen   = "32"
-	cYellow  = "33"
-	cMagenta = "35"
-	cCyan    = "36"
+	cBold = "bold"
+	cDim  = "muted"
 )
-
-// paint wraps s in an ANSI colour when on is true. Padding is always computed on the plain text first.
-func paint(on bool, code, s string) string {
-	if !on || code == "" || s == "" {
-		return s
-	}
-	return "\x1b[" + code + "m" + s + "\x1b[0m"
-}
 
 func runeLen(s string) int { return utf8.RuneCountInString(s) }
 
@@ -53,12 +42,17 @@ type col struct {
 	flex bool // takes the leftover width (at most one per table)
 }
 
-type cell struct{ s, color string }
+// cell is one table cell: plain text s, painted in role color. render, when set and colour is on, draws the
+// cell itself (label chips); it must print exactly the text of s.
+type cell struct {
+	s, color string
+	render   func(st *Styler) string
+}
 
 func plain(s string) cell { return cell{s: s} }
 
 // renderTable lays rows out in aligned columns, no wider than width. The flex column is truncated first.
-func renderTable(cols []col, rows [][]cell, width int, color bool) string {
+func renderTable(cols []col, rows [][]cell, width int, st *Styler) string {
 	const gap = 2
 	if width <= 0 {
 		width = defaultWidth
@@ -101,11 +95,15 @@ func renderTable(cols []col, rows [][]cell, width int, color bool) string {
 			if head {
 				code = cBold
 			}
+			draw := st.P(code, t)
+			if c.render != nil && t == c.s && !head && st != nil && st.On {
+				draw = c.render(st)
+			}
 			if i == len(cells)-1 {
-				b.WriteString(paint(color, code, t))
+				b.WriteString(draw)
 				break
 			}
-			b.WriteString(paint(color, code, t))
+			b.WriteString(draw)
 			b.WriteString(strings.Repeat(" ", w[i]-runeLen(t)+gap))
 		}
 		b.WriteString("\n")
@@ -155,7 +153,7 @@ func wrapLine(s string, width int) []string {
 }
 
 // wrapText wraps every line to width; fenced code blocks and blank lines are left alone.
-func wrapText(text string, width int, color bool) string {
+func wrapText(text string, width int, st *Styler) string {
 	var out []string
 	fence := false
 	for _, l := range strings.Split(text, "\n") {
@@ -163,32 +161,16 @@ func wrapText(text string, width int, color bool) string {
 		switch {
 		case strings.HasPrefix(t, "```"):
 			fence = !fence
-			out = append(out, paint(color, cDim, l))
+			out = append(out, st.P(cDim, l))
 		case fence:
 			out = append(out, l)
 		case strings.HasPrefix(l, "#"):
-			out = append(out, paint(color, cBold, l))
+			out = append(out, st.P(cBold, l))
 		default:
 			out = append(out, wrapLine(l, width)...)
 		}
 	}
 	return strings.Join(out, "\n")
-}
-
-// shortLabels puts kind:* first, drops the "kind:" prefix, keeps the rest in order.
-func shortLabels(labels string) string {
-	if labels == "" || labels == "-" {
-		return "-"
-	}
-	var kinds, rest []string
-	for _, l := range strings.Split(labels, ",") {
-		if strings.HasPrefix(l, "kind:") {
-			kinds = append(kinds, strings.TrimLeft(strings.TrimPrefix(l, "kind:"), ":"))
-		} else {
-			rest = append(rest, l)
-		}
-	}
-	return strings.Join(append(kinds, rest...), ",")
 }
 
 func humanDur(sec int) string {
@@ -209,11 +191,11 @@ func humanDur(sec int) string {
 func stateColor(st string) string {
 	switch st {
 	case "open":
-		return cGreen
+		return "state-open"
 	case "merged":
-		return cMagenta
+		return "state-merged"
 	case "closed":
-		return cRed
+		return "state-closed"
 	}
 	return ""
 }

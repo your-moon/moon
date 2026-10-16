@@ -34,11 +34,14 @@ type row struct {
 	state, milestone, labels, title string
 	updated                         string
 	local                           bool
+	work                            Status
 }
 
 func (a *App) collect(o *Opts, state, q string) []row {
 	q = strings.ToLower(q)
 	label, ms := o.str("label"), o.str("milestone")
+	keep, _ := statusSet(o) // already validated by resolveFilters
+	we := a.newWorkEnv()
 	var out []row
 	for _, short := range a.shortsFor(o) {
 		for _, r := range a.readIndex(short) {
@@ -56,7 +59,11 @@ func (a *App) collect(o *Opts, state, q string) []row {
 				continue
 			}
 			n, _ := strconv.Atoi(num)
-			out = append(out, row{ref: short + "#" + num, line: short + "#" + num + "\t" + st + "\t" + orDash(rms) + "\t" + orDash(labels) + "\t" + title,
+			ws := we.status(short+"#"+num, short, n, st, splitNonEmpty(labels))
+			if keep != nil && !keep[ws.Name] {
+				continue
+			}
+			out = append(out, row{ref: short + "#" + num, work: ws, line: short + "#" + num + "\t" + st + "\t" + orDash(rms) + "\t" + orDash(labels) + "\t" + title,
 				num: n, state: st, milestone: rms, labels: labels, title: title, updated: r[4]})
 		}
 		var pend []*Op
@@ -85,7 +92,11 @@ func (a *App) collect(o *Opts, state, q string) []row {
 			if q != "" && !strings.Contains(strings.ToLower(title), q) {
 				continue
 			}
-			out = append(out, row{ref: op.Ref, line: op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)\tlocal",
+			ws := we.status(op.Ref, short, 0, "open", labels)
+			if keep != nil && !keep[ws.Name] {
+				continue
+			}
+			out = append(out, row{ref: op.Ref, work: ws, line: op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)\tlocal",
 				num: math.MaxInt32, state: "open", milestone: tm, labels: strings.Join(labels, ","), title: title + " (pending sync)",
 				updated: a.Now().UTC().Format("2006-01-02T15:04:05Z"), local: true})
 		}
@@ -109,15 +120,26 @@ func orDash(s string) string {
 	return s
 }
 
-func (a *App) cmdLs(o *Opts) error {
+// resolveFilters validates and normalises the filter flags shared by ls, frontier and milestones show.
+func (a *App) resolveFilters(o *Opts) error {
 	if err := a.resolveMilestone(o); err != nil {
+		return err
+	}
+	if _, err := statusSet(o); err != nil {
+		return err
+	}
+	return a.resolveLabel(o)
+}
+
+func (a *App) cmdLs(o *Opts) error {
+	if err := a.resolveFilters(o); err != nil {
 		return err
 	}
 	return a.listRows(o, a.collect(o, o.str("state"), o.str("q")))
 }
 
 func (a *App) cmdFrontier(o *Opts) error {
-	if err := a.resolveMilestone(o); err != nil {
+	if err := a.resolveFilters(o); err != nil {
 		return err
 	}
 	var rows []row
@@ -250,8 +272,12 @@ func (a *App) cmdShow(o *Opts) error {
 			claim += "  [STALE]"
 		}
 	}
+	status := a.showStatus(short, ident, ref, pending)
 	if !pretty || isLocalIdent(ident) {
 		a.printf("claim: %s\n", claim)
+		if pretty || o.B["show-status"] {
+			a.printf("status: %s\n", status.Label())
+		}
 	}
 	a.printf("%s", nowNote)
 	if isLocalIdent(ident) {
@@ -328,7 +354,7 @@ func (a *App) cmdShow(o *Opts) error {
 			if len(pending) > 0 {
 				e.title += " (pending sync)"
 			}
-			a.showPretty(ref, e, h, text, claim)
+			a.showPretty(ref, e, h, text, claim, status)
 			if live {
 				a.printf("\n"+liveNote+"\n", a.keepDays())
 			}
@@ -414,21 +440,21 @@ func (a *App) cmdStatus(o *Opts) error {
 		}
 		a.println(dumps(Obj{{"outbox", len(ops)}, {"errors", errs}, {"error_ops", e}, {"repos", rs}}, false))
 	case "table":
-		c := paint(a.Color, cGreen, "0 errors")
+		c := a.P("state-open", "0 errors")
 		if errs > 0 {
-			c = paint(a.Color, cRed, fmt.Sprintf("%d errors", errs))
+			c = a.P("error", fmt.Sprintf("%d errors", errs))
 		}
 		a.printf("outbox: %d queued, %s\n", len(ops), c)
 		for _, op := range ops {
 			if op.LastError != nil && *op.LastError != "" {
-				a.println("  " + paint(a.Color, cRed, "ERR") + fmt.Sprintf(" %s %s %s (attempts %d): %s", op.OpID, op.Op, op.Ref, op.Attempts, ellipsize(*op.LastError, max(a.Width-40, 20))))
+				a.println("  " + a.P("error", "ERR") + fmt.Sprintf(" %s %s %s (attempts %d): %s", op.OpID, op.Op, op.Ref, op.Attempts, ellipsize(*op.LastError, max(a.Width-40, 20))))
 			}
 		}
 		for _, r := range stats {
 			if r.local {
 				a.printf("%s: local-only, %d issues\n", r.short, r.n)
 			} else if !r.pulled {
-				a.printf("%s: %s, run moon issues pull\n", r.short, paint(a.Color, cYellow, "never pulled"))
+				a.printf("%s: %s, run moon issues pull\n", r.short, a.P("warning", "never pulled"))
 			} else {
 				a.printf("%s: last pull %s ago, %d issues\n", r.short, humanDur(r.ago), r.n)
 			}
@@ -556,6 +582,8 @@ func (a *App) cmdClaims(o *Opts) error {
 	}
 	sort.Strings(names)
 	var rows [][]string
+	var sts []Status
+	we := a.newWorkEnv()
 	for _, n := range names {
 		if !strings.HasSuffix(n, ".json") {
 			continue
@@ -568,6 +596,8 @@ func (a *App) cmdClaims(o *Opts) error {
 		if a.claimIsStale(c) {
 			st = "STALE"
 		}
+		cref := strings.Replace(strings.TrimSuffix(n, ".json"), "-", "#", 1)
+		sts = append(sts, a.claimWork(we, cref))
 		pid := "-"
 		if c.Pid != 0 {
 			pid = strconv.Itoa(c.Pid)
@@ -580,14 +610,14 @@ func (a *App) cmdClaims(o *Opts) error {
 	for _, r := range rows {
 		age, _ := strconv.Atoi(r[5])
 		ttl, _ := strconv.Atoi(r[6])
-		js = append(js, Obj{{"ref", r[0]}, {"state", strings.ToLower(r[1])}, {"agent", r[2]}, {"host", r[3]}, {"pid", r[4]}, {"age_seconds", age}, {"ttl_seconds", ttl}})
+		js = append(js, Obj{{"ref", r[0]}, {"state", strings.ToLower(r[1])}, {"status", sts[len(js)].Name}, {"issue_closed", sts[len(js)].Name == StDone}, {"agent", r[2]}, {"host", r[3]}, {"pid", r[4]}, {"age_seconds", age}, {"ttl_seconds", ttl}})
 	}
 	if v.format == "table" {
 		for i := range rows {
 			rows[i] = humanClaimRow(rows[i])
 		}
 	}
-	a.claimsTable(rows, js, o)
+	a.claimsTable(rows, sts, js, o)
 	return nil
 }
 
@@ -621,4 +651,45 @@ func (a *App) localMilestones(short string) []string {
 		out = append(out, fmt.Sprintf("%s\t%s\t%d\t%d\t", m, st, closed[m], open[m]))
 	}
 	return out
+}
+
+// issueFacts is the effective state and labels of an issue as the mirror (plus queued ops) has it; an issue
+// the mirror does not have counts as open with no labels.
+func (a *App) issueFacts(short, ident string, pending []*Op) (state string, labels []string) {
+	e := &eff{state: "open"}
+	if isLocalIdent(ident) {
+		for _, op := range a.loadOutbox() {
+			if op.Op == "new" && op.Ref == short+"#"+ident {
+				e.labels = argList(op.Args, "labels")
+			}
+		}
+	} else {
+		for _, r := range a.readIndex(short) {
+			if r[0] == ident {
+				e.state, e.labels = r[1], splitNonEmpty(r[3])
+			}
+		}
+	}
+	var rest []*Op
+	for _, op := range pending {
+		if op.Op != "new" {
+			rest = append(rest, op)
+		}
+	}
+	applyOps(e, rest)
+	return e.state, e.labels
+}
+
+func (a *App) showStatus(short, ident, ref string, pending []*Op) Status {
+	state, labels := a.issueFacts(short, ident, pending)
+	n, _ := strconv.Atoi(ident)
+	return a.newWorkEnv().status(ref, short, n, state, labels)
+}
+
+// claimWork is the status of the issue a claim file belongs to.
+func (a *App) claimWork(we *workEnv, ref string) Status {
+	short, ident, _ := strings.Cut(ref, "#")
+	state, labels := a.issueFacts(short, ident, nil)
+	n, _ := strconv.Atoi(ident)
+	return we.status(ref, short, n, state, labels)
 }

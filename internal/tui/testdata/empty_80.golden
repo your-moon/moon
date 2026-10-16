@@ -20,5 +20,5 @@
 
 
 
-j/k move  / search  s sort  f filter  c claim  u release  x close  m comment  ?…
-0/0  state:open  sort:number↓  |  mirror pulled 5 min ago
+j/k move  / search  s sort  f filter  w working  l labels  c claim  u release  …
+0/0  state:open  sort:number↓  labels:short  |  mirror pulled 5 min ago

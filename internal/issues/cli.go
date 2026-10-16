@@ -39,10 +39,19 @@ func bodyFls() []fl { return []fl{{name: "body", kind: 's'}, {name: "body-file",
 
 // fmtFls: how a human wants the output. sortFls: ordering and size, for the long lists.
 func fmtFls() []fl {
-	return []fl{{name: "format", kind: 's', choices: []string{"auto", "table", "tsv", "json"}, def: "auto"}, {name: "no-color", kind: 'b'}}
+	return []fl{{name: "format", kind: 's', choices: []string{"auto", "table", "tsv", "json"}, def: "auto"}, {name: "no-color", kind: 'b'},
+		{name: "color", kind: 's', choices: []string{"auto", "always", "never"}, def: "auto"}}
 }
 func sortFls() []fl {
 	return []fl{{name: "sort", kind: 's', choices: []string{"number", "updated", "created", "title"}},
+		{name: "reverse", short: "r", kind: 'b'}, {name: "limit", kind: 's'}}
+}
+
+// issueListFls are the flags of the commands that list issues: the status filters, sort by status, label display.
+func issueListFls() []fl {
+	return []fl{{name: "working", kind: 'b'}, {name: "idle", kind: 'b'}, {name: "status", kind: 's'}, {name: "show-status", kind: 'b'},
+		{name: "labels", kind: 's', choices: []string{LabelsFull, LabelsShort, LabelsNone}},
+		{name: "sort", kind: 's', choices: []string{"number", "updated", "created", "title", "status"}},
 		{name: "reverse", short: "r", kind: 'b'}, {name: "limit", kind: 's'}}
 }
 func cat(l ...[]fl) []fl {
@@ -57,21 +66,22 @@ func commands() map[string]*spec {
 	one := func(f ...fl) flset { return f }
 	return map[string]*spec{
 		"ls": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
-			fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}, fl{name: "q", short: "q", kind: 's'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdLs},
-		"show": {fls: one(freshFl()).with(fmtFls()), npos: 1, read: true, run: (*App).cmdShow},
+			fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}, fl{name: "q", short: "q", kind: 's'}).with(fmtFls(), issueListFls()), read: true, run: (*App).cmdLs},
+		"show": {fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), npos: 1, read: true, run: (*App).cmdShow},
 		"milestones": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}}).with(fmtFls(),
 			[]fl{{name: "sort", kind: 's', choices: []string{"due", "progress", "title", "open"}}, {name: "reverse", short: "r", kind: 'b'}, {name: "limit", kind: 's'}}),
 			read: true, run: (*App).cmdMilestones},
 		"milestones show": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
-			fl{name: "label", kind: 's'}).with(fmtFls(), sortFls()), npos: 1, read: true, run: (*App).cmdMilestoneShow},
+			fl{name: "label", kind: 's'}).with(fmtFls(), issueListFls()), npos: 1, read: true, run: (*App).cmdMilestoneShow},
 		"prs": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "merged", "closed", "all"}, def: "open"},
 			fl{name: "since", kind: 's'}, fl{name: "json", kind: 'b'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdPRs},
 		"pr show":  {fls: one(freshFl()), npos: 1, read: true, run: (*App).cmdPRShow},
-		"frontier": {fls: one(repoFl(), freshFl(), fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdFrontier},
+		"frontier": {fls: one(repoFl(), freshFl(), fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}).with(fmtFls(), issueListFls()), read: true, run: (*App).cmdFrontier},
 		"claim": {fls: one(fl{name: "agent", kind: 's', req: true}, fl{name: "ttl", kind: 's', def: "120m"}, fl{name: "pid", kind: 's', def: "0"}),
 			npos: 1, run: (*App).cmdClaim},
 		"release": {fls: one(fl{name: "agent", kind: 's'}, fl{name: "force", kind: 'b'}), npos: 1, run: (*App).cmdRelease},
-		"claims":  {fls: one(freshFl()).with(fmtFls()), read: true, run: (*App).cmdClaims},
+		"claims":  {fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), read: true, run: (*App).cmdClaims},
+		"sweep":   {fls: one(freshFl(), fl{name: "release", kind: 'b'}).with(fmtFls()), read: true, run: (*App).cmdSweep},
 		"status":  {fls: fmtFls(), run: (*App).cmdStatus},
 		"new": {fls: cat(one(fl{name: "repo", kind: 's', req: true}, fl{name: "title", kind: 's', req: true}, fl{name: "label", kind: 'a'},
 			fl{name: "milestone", kind: 's'}, fl{name: "now", kind: 'b'}), bodyFls()), run: (*App).cmdNew},
@@ -100,19 +110,28 @@ commands:
   pr show <ref>                  frontier [--repo R] [--label L] [--milestone M]
   claim <ref> --agent NAME [--ttl 120m] [--pid N]    (exit 3 = held by someone else)
   release <ref> (--agent NAME | --force)             claims    status
+  sweep [--release]              list (or release) claims that are stale or on closed issues
   new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--now]
   comment|close|reopen|label|milestone|edit <ref> ...
   push [--repo R]   pull [--repo R] [--full]   sync [--repo R] [--quiet]   prune [--repo R]
 
 Reading commands (ls frontier prs claims status milestones show) also take:
   --format auto|table|tsv|json   auto = table on a terminal, tab-separated when piped
-  --no-color                     (colour is also off when NO_COLOR is set)
+  --no-color                     (colour is also off when NO_COLOR is set or TERM=dumb)
+  --color auto|always|never      always = colour a piped table (moon issues ls --color always | less -R)
   --sort number|updated|created|title  [--reverse]  --limit N     (ls, frontier, prs; limit 0 = all)
+  --sort status                  (ls, frontier) stale, working, in review, blocked, ready, open, done
+
+Work status (ls, frontier, show, claims): derived from the issue, its claim and the open pull requests.
+  -w --working   only status working          -i --idle   only ready or open (nobody on it)
+  --status a,b   only these (stale working in-review blocked ready open done)   --show-status  add it to piped output
+  -B --labels full|short|none    how the LABELS column is shown; -L accepts the shown name or a unique suffix
 
 Short flags (the same in every command that has the long one; they combine: -rl5, -s up, -l5, --limit=5):
   -s --sort      -l --limit      -r --reverse    -f --format (-j = json, -t = tsv)
   -L --label     -m --milestone  -S --state      -R --repo   -a --agent
   -q --query     -n --no-color   -h --help
+  -w --working   -i --idle       -B --labels
   --sort values may be abbreviated (-s up = updated); "moon issues ls 10" shows 10 rows.
 
 moon issues <command> --help shows the options and two examples for that command.
@@ -123,7 +142,7 @@ Aliases come from [repos.<alias>] in moon.toml. Env: ISSUES_NO_AUTOSYNC, ISSUES_
 // shortMap is the one set of short flags, the same in every command that has the flag. -j and -t are
 // shortcuts for --format json / --format tsv. A command that does not have the long flag does not get the short one.
 var shortMap = map[string]string{"s": "sort", "l": "limit", "r": "reverse", "f": "format", "L": "label", "m": "milestone",
-	"S": "state", "R": "repo", "a": "agent", "n": "no-color"}
+	"S": "state", "R": "repo", "a": "agent", "n": "no-color", "w": "working", "i": "idle", "B": "labels"}
 
 // shortKey is the single letter that selects f in this command ("" if none).
 func (f fl) shortKey() string {
@@ -427,7 +446,9 @@ func Main(args []string, e Env) int {
 		fmt.Fprintln(e.Err, err)
 		return 2
 	}
-	a.Color = e.TTY && e.Getenv("NO_COLOR") == "" && !o.B["no-color"]
+	caps := DetectColor(e.Getenv, e.TTY, o.B["no-color"], o.str("color"))
+	a.Color, a.Forced = caps.On, caps.Forced
+	a.St = NewStyler(caps, e.Getenv, cfg.Colors)
 	if sp.read {
 		if err := a.autosync(name, o, cfgPath); err != nil {
 			fmt.Fprintln(e.Err, err)

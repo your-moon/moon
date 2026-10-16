@@ -45,9 +45,10 @@ const (
 	sortUpdated
 	sortCreated
 	sortTitle
+	sortStatus
 )
 
-var sortNames = [...]string{"number", "updated", "created", "title"}
+var sortNames = [...]string{"number", "updated", "created", "title", "status"}
 
 type mode int
 
@@ -100,6 +101,8 @@ type Model struct {
 	reverse bool
 
 	fState, fLabel, fMilestone, fAlias string
+	fWorking                           bool   // w: only issues with status working
+	labelMode                          string // "" = by terminal width; else issues.LabelsFull, LabelsShort or LabelsNone
 
 	prevState string // state filter before a milestone drill-in
 	drilled   bool
@@ -156,6 +159,9 @@ func (m *Model) matches(e *entry) bool {
 	if m.fAlias != "" && it.Alias != m.fAlias {
 		return false
 	}
+	if m.fWorking && it.Work.Name != issues.StWorking {
+		return false
+	}
 	if m.fMilestone == noMilestone {
 		if it.Milestone != "" {
 			return false
@@ -199,6 +205,8 @@ func (m *Model) before(a, b *entry) bool {
 		c = -strings.Compare(x.Created, y.Created)
 	case sortTitle:
 		c = strings.Compare(a.lowTitle, b.lowTitle)
+	case sortStatus:
+		c = issues.StatusRank(x.Work.Name) - issues.StatusRank(y.Work.Name)
 	}
 	if c == 0 {
 		switch nx, ny := numKey(x), numKey(y); {
@@ -420,7 +428,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		m.dtop -= detH/2 + 1
 		m.clampDetail()
-	case "enter", "l", "right":
+	case "enter", "right":
 		if m.cur() != nil {
 			m.full, m.dtop = true, 0
 		}
@@ -463,6 +471,11 @@ func (m Model) common(s string) (tea.Model, tea.Cmd) {
 	case "r":
 		m.reverse = !m.reverse
 		m.refilter()
+	case "w":
+		m.fWorking = !m.fWorking
+		m.refilter()
+	case "l":
+		m.labelMode = nextLabelMode(m.effLabelMode())
 	case "f":
 		m.mode, m.menu, m.menuCur = modeMenu, menuTop, 0
 	case "tab":
@@ -686,7 +699,7 @@ func (m Model) menuPick() Model {
 			m.menu, m.menuCur = menuMilestone, 0
 			m.menuOpts = append([]string{""}, issues.SortedMilestones(m.snap.Items)...)
 		case 3:
-			m.fState, m.fLabel, m.fMilestone, m.fAlias = "open", "", "", ""
+			m.fState, m.fLabel, m.fMilestone, m.fAlias, m.fWorking = "open", "", "", "", false
 			m.mode = modeList
 			m.refilter()
 		}
@@ -885,4 +898,23 @@ func firstLine(out string, err error) string {
 	}
 	l, _, _ := strings.Cut(s, "\n")
 	return l
+}
+
+// effLabelMode is the labels column mode in use: the chosen one, else full from 110 columns, short from 70, hidden below.
+func (m *Model) effLabelMode() string {
+	if m.labelMode != "" {
+		return m.labelMode
+	}
+	return issues.LabelModeFor(m.w)
+}
+
+// nextLabelMode cycles full, short, hidden.
+func nextLabelMode(cur string) string {
+	switch cur {
+	case issues.LabelsFull:
+		return issues.LabelsShort
+	case issues.LabelsShort:
+		return issues.LabelsNone
+	}
+	return issues.LabelsFull
 }

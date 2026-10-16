@@ -154,11 +154,11 @@ func TestColorOnlyOnTTY(t *testing.T) {
 	humanFixture(e)
 	e.tty, e.width = true, 100
 	out, _, _ := e.run("ls", "--repo", "app", "--state", "all")
-	if !strings.Contains(out, "\x1b[32mopen\x1b[0m") || !strings.Contains(out, "\x1b[31mclosed\x1b[0m") {
+	if !strings.Contains(out, "\x1b[32mopen\x1b[0m") || !strings.Contains(out, "\x1b[91mclosed\x1b[0m") {
 		t.Errorf("state colours missing: %q", out)
 	}
-	if !strings.Contains(out, "\x1b[33malice\x1b[0m") {
-		t.Errorf("claim colour missing: %q", out)
+	if !strings.Contains(out, "\x1b[94min review: PR #31\x1b[0m") {
+		t.Errorf("status colour missing: %q", out)
 	}
 }
 
@@ -235,7 +235,7 @@ func TestJSONFormat(t *testing.T) {
 	e := newEnv(t)
 	humanFixture(e)
 	out, _, code := e.run("ls", "--repo", "lib", "--format", "json")
-	eq(t, "ls json", out, `[{"ref": "lib#3", "state": "open", "milestone": null, "labels": ["kind:bug"], "title": "parser: crashes on empty input", "updated_at": "2026-02-12T09:00:00Z"}]`+"\n")
+	eq(t, "ls json", out, `[{"ref": "lib#3", "state": "open", "status": "open", "status_detail": "open", "milestone": null, "labels": ["kind:bug"], "title": "parser: crashes on empty input", "updated_at": "2026-02-12T09:00:00Z"}]`+"\n")
 	if code != 0 {
 		t.Fatal(code)
 	}
@@ -269,7 +269,7 @@ func TestShowPretty(t *testing.T) {
 	if code != 0 {
 		t.Fatal(code)
 	}
-	for _, want := range []string{"app#7  widget: renders blank\n", "open · milestone v1.0 · by ghost · updated 2026-02-01T00:00:00Z\n", "labels: bug, area::ui\n", "claim:  none\n",
+	for _, want := range []string{"app#7  widget: renders blank\n", "open · milestone v1.0 · by ghost · updated 2026-02-01T00:00:00Z\n", "labels: area::ui, bug\n", "claim:  none\n", "status: open\n",
 		"code lines are never wrapped even when they are far longer than the terminal width allows\n", "## Comments\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output lacks %q:\n%s", want, out)
@@ -323,7 +323,7 @@ func TestHelp(t *testing.T) {
 		t.Errorf("-q -h: %d %q", code, out)
 	}
 	// the sort flags are documented on ls
-	if out, _, _ := e.run("ls", "--help"); !strings.Contains(out, "--sort {number|updated|created|title}") || !strings.Contains(out, "-r, --reverse") {
+	if out, _, _ := e.run("ls", "--help"); !strings.Contains(out, "--sort {number|updated|created|title|status}") || !strings.Contains(out, "-r, --reverse") {
 		t.Errorf("ls help lacks sort flags:\n%s", out)
 	}
 }
@@ -421,11 +421,6 @@ func TestRenderHelpers(t *testing.T) {
 			t.Errorf("ellipsize(%q,%d) = %q want %q", c.in, c.n, got, c.want)
 		}
 	}
-	for in, want := range map[string]string{"": "-", "-": "-", "area:ui,kind:bug": "bug,area:ui", "kind::feature,x": "feature,x", "a,b": "a,b"} {
-		if got := shortLabels(in); got != want {
-			t.Errorf("shortLabels(%q) = %q want %q", in, got, want)
-		}
-	}
 	got := wrapLine("  - one two three four five six seven", 20)
 	if strings.Join(got, "|") != "  - one two three|  four five six|  seven" {
 		t.Errorf("wrapLine: %q", got)
@@ -441,7 +436,7 @@ func TestRenderHelpers(t *testing.T) {
 			t.Errorf("humanDur(%d) = %q want %q", sec, got, want)
 		}
 	}
-	tbl := renderTable([]col{{head: "A"}, {head: "T", flex: true}}, [][]cell{{plain("x"), plain("a very long title indeed")}}, 20, false)
+	tbl := renderTable([]col{{head: "A"}, {head: "T", flex: true}}, [][]cell{{plain("x"), plain("a very long title indeed")}}, 20, nil)
 	eq(t, "table", tbl, "A  T\nx  a very long titl…\n")
 }
 
@@ -610,7 +605,7 @@ func TestMilestonesShow(t *testing.T) {
 	e.tty, e.width, e.extra["NO_COLOR"] = true, 80, "1"
 	out, errs, code = e.run("milestones", "show", "v1.0")
 	if code != 0 || !strings.HasPrefix(out, "v1.0  open  (app)\n") || !strings.Contains(out, "3/7 closed · 42% · 4 open · due 2026-04-01") ||
-		!strings.Contains(out, "REF     STATE  CLAIM  LABELS") || !strings.Contains(out, "app#8") || errs != "showing 2 of 2\n" {
+		!strings.Contains(out, "REF     STATE  STATUS") || !strings.Contains(out, "app#8") || errs != "showing 2 of 2\n" {
 		t.Errorf("tty show: %d\n%s\n%q", code, out, errs)
 	}
 	if _, errs, code = e.run("milestones", "show", "v9"); code != 2 || !strings.Contains(errs, "no milestone 'v9'") {

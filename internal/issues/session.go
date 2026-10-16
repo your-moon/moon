@@ -40,16 +40,18 @@ type Item struct {
 	Created   string // ISO timestamp, empty when the issue file is no longer kept
 	Title     string
 	Claim     *ClaimInfo
-	Pending   int // queued local ops on this issue
+	Pending   int    // queued local ops on this issue
+	Work      Status // derived work status (working, in review, stale, ...)
 }
 
 // Snapshot is the whole list plus mirror health.
 type Snapshot struct {
-	Aliases    []string
-	Items      []Item
-	Queued     int // ops in the outbox
-	PullAgeSec int // oldest last pull across aliases; -1 when never pulled
-	Missing    bool
+	Aliases     []string
+	Items       []Item
+	Queued      int                          // operations in the outbox (not issues: two ops on one issue count 2)
+	LabelColors map[string]map[string]string // alias -> label name -> GitHub colour hex, from labels.tsv
+	PullAgeSec  int                          // oldest last pull across aliases; -1 when never pulled
+	Missing     bool
 }
 
 // Detail is one issue as shown in the detail pane.
@@ -58,6 +60,7 @@ type Detail struct {
 	Labels                               []string
 	Body                                 string // markdown after the front matter, comments included
 	Claim                                *ClaimInfo
+	Work                                 Status
 	Pending                              []string // queued ops, described
 	NotKept                              bool     // closed long ago, file pruned
 }
@@ -66,6 +69,7 @@ type Detail struct {
 type Session struct {
 	app     *App
 	created map[string]string
+	pal     Palette
 }
 
 // NewSession finds and loads the config exactly as `moon issues` does. dir overrides the mirror directory.
@@ -89,8 +93,11 @@ func NewSession(cfgPath, dir string, e Env) (*Session, error) {
 	}
 	a := &App{Home: home, GH: ExecGH{}, Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
 		Environ: e.Getenv, Repos: cfg.Repos}
-	return &Session{app: a, created: map[string]string{}}, nil
+	return &Session{app: a, created: map[string]string{}, pal: NewPalette(DetectTheme(e.Getenv, cfg.Colors.Theme), cfg.Colors.Overrides)}, nil
 }
+
+// Palette is the colour palette of the config's theme, for the terminal UI.
+func (s *Session) Palette() Palette { return s.pal }
 
 // MirrorDir is where the mirror lives.
 func (s *Session) MirrorDir() string { return s.app.Home }
@@ -130,7 +137,8 @@ func (s *Session) createdAt(short, num string) string {
 // Load reads the index, claims and outbox. It never panics on a missing or empty mirror.
 func (s *Session) Load() Snapshot {
 	a := s.app
-	snap := Snapshot{Aliases: a.Shorts(), Missing: true, PullAgeSec: 0}
+	snap := Snapshot{Aliases: a.Shorts(), Missing: true, PullAgeSec: 0, LabelColors: map[string]map[string]string{}}
+	we := a.newWorkEnv()
 	ops := a.loadOutbox()
 	snap.Queued = len(ops)
 	byRef := map[string][]*Op{}
@@ -150,6 +158,7 @@ func (s *Session) Load() Snapshot {
 		}
 	}
 	for _, short := range snap.Aliases {
+		snap.LabelColors[short] = a.labelColors(short)
 		if _, err := os.Stat(filepath.Join(a.Home, short, "index.tsv")); err == nil {
 			snap.Missing = false
 		}
@@ -169,6 +178,7 @@ func (s *Session) Load() Snapshot {
 			applyOps(e, pend)
 			it := Item{Ref: ref, Alias: short, Num: n, State: e.state, Milestone: e.milestone, Labels: e.labels, Updated: r[4],
 				Created: s.createdAt(short, r[0]), Title: e.title, Pending: len(pend)}
+			it.Work = we.status(ref, short, n, e.state, e.labels)
 			if c := claims[ref]; c != nil {
 				it.Claim = s.claimInfo(c)
 			}
@@ -189,6 +199,7 @@ func (s *Session) Load() Snapshot {
 			applyOps(e, rest)
 			it := Item{Ref: op.Ref, Alias: short, State: e.state, Milestone: e.milestone, Labels: e.labels, Updated: op.TS, Created: op.TS,
 				Title: e.title, Pending: len(byRef[op.Ref])}
+			it.Work = we.status(op.Ref, short, 0, e.state, e.labels)
 			if c := claims[op.Ref]; c != nil {
 				it.Claim = s.claimInfo(c)
 			}
@@ -269,6 +280,8 @@ func (s *Session) Detail(ref string) (Detail, error) {
 	}
 	applyOps(e, pend)
 	d.Title, d.State, d.Milestone, d.Labels = e.title, e.state, e.milestone, e.labels
+	num, _ := strconv.Atoi(ident)
+	d.Work = a.newWorkEnv().status(ref, short, num, e.state, e.labels)
 	return d, nil
 }
 
@@ -380,6 +393,8 @@ type ClaimRow struct {
 	Pid              int
 	AgeSec, TTLSec   int
 	Stale            bool
+	Work             Status // status of the claimed issue; Work.Name done means the claim is stale cargo
+	IssueClosed      bool
 }
 
 // Claims lists every claim, sorted by ref file name like `moon issues claims`.
@@ -393,14 +408,17 @@ func (s *Session) Claims() []ClaimRow {
 		}
 	}
 	sort.Strings(names)
+	we := a.newWorkEnv()
 	var out []ClaimRow
 	for _, n := range names {
 		c := a.readClaim(filepath.Join(a.claimsDir(), n))
 		if c == nil {
 			continue
 		}
-		out = append(out, ClaimRow{Ref: strings.Replace(strings.TrimSuffix(n, ".json"), "-", "#", 1), Agent: c.Agent, Host: c.Host, Pid: c.Pid,
-			AgeSec: int(a.nowEpoch() - c.TS), TTLSec: int(c.TTL), Stale: a.claimIsStale(c)})
+		ref := strings.Replace(strings.TrimSuffix(n, ".json"), "-", "#", 1)
+		w := a.claimWork(we, ref)
+		out = append(out, ClaimRow{Ref: ref, Agent: c.Agent, Host: c.Host, Pid: c.Pid,
+			AgeSec: int(a.nowEpoch() - c.TS), TTLSec: int(c.TTL), Stale: a.claimIsStale(c), Work: w, IssueClosed: w.Name == StDone})
 	}
 	return out
 }

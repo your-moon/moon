@@ -26,7 +26,7 @@ func (a *App) resolveView(o *Opts, long bool) view {
 	}
 	if v.format == "" || v.format == "auto" {
 		v.format = "tsv"
-		if a.TTY {
+		if a.TTY || a.Forced { // --color always is for pagers (less -R): they want the table
 			v.format = "table"
 		}
 	}
@@ -43,7 +43,7 @@ func (a *App) resolveView(o *Opts, long bool) view {
 
 // sortedBy returns a stable order: ties keep their incoming order, in both directions.
 // number, created and updated put the newest first (like the default listing); title is A-Z.
-func sortedBy[T any](items []T, key string, reverse bool, num func(T) int, created, updated, title func(T) string) []T {
+func sortedBy[T any](items []T, key string, reverse bool, num func(T) int, created, updated, title func(T) string, rank func(T) int) []T {
 	if key == "" && !reverse {
 		return items
 	}
@@ -64,6 +64,10 @@ func sortedBy[T any](items []T, key string, reverse bool, num func(T) int, creat
 		less = func(x, y T) bool { return updated(x) > updated(y) }
 	case "title":
 		less = func(x, y T) bool { return strings.ToLower(title(x)) < strings.ToLower(title(y)) }
+	case "status": // StatusOrder, most in need of attention first; ties keep their order
+		if rank != nil {
+			less = func(x, y T) bool { return rank(x) < rank(y) }
+		}
 	}
 	out := append([]T{}, items...)
 	sort.SliceStable(out, func(i, j int) bool {
@@ -104,14 +108,9 @@ func (a *App) noMirror(shorts []string) []string {
 	return out
 }
 
-func (a *App) claimCell(ref string) cell {
-	switch st, c := a.claimStatus(ref); st {
-	case "fresh":
-		return cell{c.Agent, cYellow}
-	case "stale":
-		return cell{c.Agent + " (stale)", cRed}
-	}
-	return cell{"-", cDim}
+// wantStatusCol: piped output only grows the trailing status column when a status flag or sort asks for it.
+func wantStatusCol(o *Opts) bool {
+	return o.Seen["status"] || o.B["working"] || o.B["idle"] || o.B["show-status"] || o.str("sort") == "status"
 }
 
 func (a *App) listRows(o *Opts, rows []row) error {
@@ -119,13 +118,14 @@ func (a *App) listRows(o *Opts, rows []row) error {
 	total := len(rows)
 	rows = sortedBy(rows, o.str("sort"), o.B["reverse"],
 		func(r row) int { return r.num }, func(r row) string { return fmt.Sprintf("%012d", r.num) },
-		func(r row) string { return r.updated }, func(r row) string { return r.title })
+		func(r row) string { return r.updated }, func(r row) string { return r.title },
+		func(r row) int { return StatusRank(r.work.Name) })
 	rows = limitRows(rows, v.limit)
 	switch v.format {
 	case "json":
 		l := []any{}
 		for _, r := range rows {
-			l = append(l, Obj{{"ref", r.ref}, {"state", r.state}, {"milestone", nilIfEmpty(r.milestone)}, {"labels", splitNonEmpty(r.labels)},
+			l = append(l, Obj{{"ref", r.ref}, {"state", r.state}, {"status", r.work.Name}, {"status_detail", r.work.Label()}, {"milestone", nilIfEmpty(r.milestone)}, {"labels", splitNonEmpty(r.labels)},
 				{"title", r.title}, {"updated_at", r.updated}})
 		}
 		a.println(dumps(l, false))
@@ -138,21 +138,88 @@ func (a *App) listRows(o *Opts, rows []row) error {
 			}
 			return nil
 		}
+		mode := o.str("labels")
+		if mode == "" {
+			mode = LabelModeFor(a.Width)
+		}
+		cols := []col{{head: "REF", max: 18}, {head: "STATE", max: 6}, {head: "STATUS", max: 28}}
+		if mode != LabelsNone {
+			texts := make([]string, len(rows))
+			for i, r := range rows {
+				texts[i] = LabelsText(splitNonEmpty(r.labels), mode)
+			}
+			cols = append(cols, col{head: "LABELS", max: LabelColWidth(texts, "LABELS", a.Width)})
+		}
+		cols = append(cols, col{head: "TITLE", flex: true})
 		cells := make([][]cell, len(rows))
 		for i, r := range rows {
-			cells[i] = []cell{plain(r.ref), {r.state, stateColor(r.state)}, a.claimCell(r.ref), plain(shortLabels(orDash(r.labels))), plain(r.title)}
+			c := []cell{{s: r.ref, color: cBold}, {s: r.state, color: stateColor(r.state)}, {s: r.work.Label(), color: statusColor(r.work.Name)}}
+			if mode != LabelsNone {
+				c = append(c, a.labelCell(shortOf(r.ref), splitNonEmpty(r.labels), mode, cols[3].max))
+			}
+			cells[i] = append(c, plain(r.title))
 		}
-		fmt.Fprint(a.Out, renderTable([]col{{head: "REF", max: 18}, {head: "STATE", max: 6}, {head: "CLAIM", max: 16},
-			{head: "LABELS", max: 28}, {head: "TITLE", flex: true}}, cells, a.Width, a.Color))
+		fmt.Fprint(a.Out, renderTable(cols, cells, a.Width, a.styler()))
 		a.footer(len(rows), total)
 	default:
+		withStatus := wantStatusCol(o)
 		var ls []string
 		for _, r := range rows {
-			ls = append(ls, r.line)
+			l := r.line
+			if withStatus {
+				l += "\t" + r.work.Label()
+			}
+			ls = append(ls, l)
 		}
 		a.println(strings.Join(ls, "\n"))
 	}
 	return nil
+}
+
+// labelCell is the labels of one row as coloured chips, whole labels only, "+N" for the ones that did not fit.
+func (a *App) labelCell(short string, labels []string, mode string, w int) cell {
+	shown, stored, more := FitLabelParts(labels, mode, w)
+	text := FitLabels(labels, mode, w)
+	if len(labels) == 0 {
+		return plain("-")
+	}
+	colors := a.labelColors(short)
+	return cell{s: text, render: func(st *Styler) string {
+		var b strings.Builder
+		for i, n := range shown {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(st.Chip(n, st.Pal.LabelColor(stored[i], colors[stored[i]])))
+		}
+		if more > 0 {
+			if len(shown) > 0 {
+				b.WriteString(" ")
+			}
+			b.WriteString(st.P(cDim, "+"+strconv.Itoa(more)))
+		}
+		return b.String()
+	}}
+}
+
+// labelColors are the GitHub colours of one repo's labels (name to hex), from labels.tsv; empty when never pulled.
+func (a *App) labelColors(short string) map[string]string {
+	if m, ok := a.lblCache[short]; ok {
+		return m
+	}
+	m := map[string]string{}
+	if s, err := readText(filepath.Join(a.Home, short, "labels.tsv")); err == nil {
+		for _, line := range splitLines(s) {
+			if p := strings.Split(line, "\t"); len(p) >= 2 && p[1] != "" {
+				m[p[0]] = p[1]
+			}
+		}
+	}
+	if a.lblCache == nil {
+		a.lblCache = map[string]map[string]string{}
+	}
+	a.lblCache[short] = m
+	return m
 }
 
 func nilIfEmpty(s string) any {
@@ -177,7 +244,7 @@ func (a *App) printPRs(o *Opts, rows []prItem) {
 	atoi := func(it prItem) int { n, _ := strconv.Atoi(it.row.Number); return n }
 	rows = sortedBy(rows, o.str("sort"), o.B["reverse"], atoi,
 		func(it prItem) string { return it.row.CreatedAt }, func(it prItem) string { return it.row.UpdatedAt },
-		func(it prItem) string { return it.row.Title })
+		func(it prItem) string { return it.row.Title }, nil)
 	rows = limitRows(rows, v.limit)
 	switch v.format {
 	case "json":
@@ -193,10 +260,10 @@ func (a *App) printPRs(o *Opts, rows []prItem) {
 			if it.row.Draft == "1" {
 				st += " draft"
 			}
-			cells[i] = []cell{plain(it.short + "#" + it.row.Number), {st, stateColor(it.row.State)}, plain(it.row.HeadRef), plain(it.row.Title)}
+			cells[i] = []cell{{s: it.short + "#" + it.row.Number, color: cBold}, {s: st, color: stateColor(it.row.State)}, plain(it.row.HeadRef), plain(it.row.Title)}
 		}
 		fmt.Fprint(a.Out, renderTable([]col{{head: "REF", max: 18}, {head: "STATE", max: 12}, {head: "BRANCH", max: 30}, {head: "TITLE", flex: true}},
-			cells, a.Width, a.Color))
+			cells, a.Width, a.styler()))
 		a.footer(len(rows), total)
 	default:
 		for _, it := range rows {
@@ -212,7 +279,15 @@ func (a *App) printPRs(o *Opts, rows []prItem) {
 
 // ---------- claims, milestones, status ----------
 
-func (a *App) claimsTable(rows [][]string, js []any, o *Opts) {
+// Word is the status without its detail: "working", "in review", "done (stale claim)".
+func (s Status) Word() string {
+	if s.Name == StDone && s.StaleClaim {
+		return "done (stale claim)"
+	}
+	return s.Name
+}
+
+func (a *App) claimsTable(rows [][]string, sts []Status, js []any, o *Opts) {
 	v := a.resolveView(o, false)
 	switch v.format {
 	case "json":
@@ -224,17 +299,22 @@ func (a *App) claimsTable(rows [][]string, js []any, o *Opts) {
 		}
 		cells := make([][]cell, len(rows))
 		for i, r := range rows {
-			col := cGreen
-			if r[1] == "STALE" {
-				col = cRed
+			rest := ""
+			if sts[i].Name == StDone || sts[i].Name == StStale { // dead weight: dim the row
+				rest = cDim
 			}
-			cells[i] = []cell{plain(r[0]), {strings.ToLower(r[1]), col}, plain(r[2]), plain(r[3]), plain(r[4]), plain(r[5]), plain(r[6])}
+			cells[i] = []cell{{s: r[0], color: cBold}, {s: sts[i].Word(), color: statusColor(sts[i].Name)}, {s: r[2], color: rest}, {s: r[3], color: rest},
+				{s: r[4], color: rest}, {s: r[5], color: rest}, {s: r[6], color: rest}}
 		}
 		fmt.Fprint(a.Out, renderTable([]col{{head: "REF"}, {head: "STATE"}, {head: "AGENT", max: 24}, {head: "HOST", max: 24}, {head: "PID"},
-			{head: "AGE"}, {head: "TTL"}}, cells, a.Width, a.Color))
+			{head: "AGE"}, {head: "TTL"}}, cells, a.Width, a.styler()))
 	default:
-		for _, r := range rows {
-			a.printf("%s\t%s\t%s\t%s\tpid=%s\tage=%ss\tttl=%ss\n", r[0], r[1], r[2], r[3], r[4], r[5], r[6])
+		for i, r := range rows {
+			a.printf("%s\t%s\t%s\t%s\tpid=%s\tage=%ss\tttl=%ss", r[0], r[1], r[2], r[3], r[4], r[5], r[6])
+			if o.B["show-status"] {
+				a.printf("\t%s", sts[i].Label())
+			}
+			a.printf("\n")
 		}
 	}
 }
@@ -251,14 +331,14 @@ func humanClaimRow(r []string) []string {
 // ---------- show ----------
 
 // showPretty prints one mirrored issue for a person: a header block, then the markdown wrapped to the terminal.
-func (a *App) showPretty(ref string, e *eff, h map[string]any, text string, claim string) {
+func (a *App) showPretty(ref string, e *eff, h map[string]any, text string, claim string, status Status) {
 	body := text
 	if i := strings.Index(text, "\n---\n"); strings.HasPrefix(text, "---\n") && i >= 0 {
 		body = strings.TrimLeft(text[i+5:], "\n")
 	}
 	w := a.Width
-	a.println(paint(a.Color, cBold, ellipsize(ref+"  "+e.title, w)))
-	meta := []string{paint(a.Color, stateColor(e.state), e.state), "milestone " + orDash(e.milestone)}
+	a.println(a.P(cBold, ellipsize(ref+"  "+e.title, w)))
+	meta := []string{a.P(stateColor(e.state), e.state), "milestone " + orDash(e.milestone)}
 	if au := hStr(h, "author"); au != "" {
 		meta = append(meta, "by "+au)
 	}
@@ -266,8 +346,39 @@ func (a *App) showPretty(ref string, e *eff, h map[string]any, text string, clai
 		meta = append(meta, "updated "+u)
 	}
 	a.println(strings.Join(meta, " · "))
-	a.println("labels: " + orDash(strings.Join(e.labels, ", ")))
+	a.println(a.labelsLine(ref, e.labels, w))
 	a.println("claim:  " + claim)
-	a.println(paint(a.Color, cDim, strings.Repeat("─", min(w, 72))))
-	a.println(wrapText(strings.TrimRight(body, "\n"), w, a.Color))
+	a.println("status: " + a.P(statusColor(status.Name), status.Label()))
+	a.println(a.P(cDim, strings.Repeat("─", min(w, 72))))
+	a.println(wrapText(strings.TrimRight(body, "\n"), w, a.styler()))
+}
+
+// labelsLine lists every label in full as chips, wrapped onto more lines when they do not fit; never cut.
+func (a *App) labelsLine(ref string, labels []string, w int) string {
+	if len(labels) == 0 {
+		return "labels: -"
+	}
+	const lead = "labels:"
+	colors := a.labelColors(shortOf(ref))
+	ordered := OrderLabels(labels)
+	var lines []string
+	cur, curW, n := lead, len(lead), 0 // n: labels on this line
+	for i, l := range ordered {
+		chip := l
+		if st := a.styler(); st != nil {
+			chip = st.Chip(l, st.Pal.LabelColor(l, colors[l]))
+		}
+		tail := ""
+		if i < len(ordered)-1 {
+			tail = ","
+		}
+		if n > 0 && curW+1+runeLen(l)+len(tail) > w {
+			lines = append(lines, cur)
+			cur, curW, n = strings.Repeat(" ", len(lead)), len(lead), 0
+		}
+		cur += " " + chip + tail
+		curW += 1 + runeLen(l) + len(tail)
+		n++
+	}
+	return strings.Join(append(lines, cur), "\n")
 }

@@ -52,7 +52,7 @@ func bar(closed, total, w int, ascii bool) string {
 	if ascii {
 		return "[" + strings.Repeat("#", fill) + strings.Repeat("-", inner-fill) + "]"
 	}
-	return stOpen.Render(strings.Repeat("█", fill)) + stDim.Render(strings.Repeat("░", inner-fill))
+	return roleStyle(issues.BarRole(percent(closed, total))).Render(strings.Repeat("█", fill)) + roleStyle("bar-empty").Render(strings.Repeat("░", inner-fill))
 }
 
 type msRow struct {
