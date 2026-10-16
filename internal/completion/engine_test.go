@@ -3,6 +3,8 @@ package completion
 import (
 	"strings"
 	"testing"
+
+	"github.com/your-moon/moon/internal/issues"
 )
 
 func want(t *testing.T, name, got, exp string) {
@@ -36,7 +38,7 @@ func TestTopLevelAndSubcommands(t *testing.T) {
 func TestFlagsAndDescriptions(t *testing.T) {
 	f := newFixture(t, standard)
 	r := f.complete("issues", "ls", "--s")
-	want(t, "--s", list(r), "--state --sort")
+	want(t, "--s", list(r), "--state --status --show-status --sort")
 	for _, c := range r.Cands {
 		if c.Desc == "" {
 			t.Errorf("%s has no description", c.Value)
@@ -65,7 +67,7 @@ func TestFlagsAndDescriptions(t *testing.T) {
 
 func TestEnumValues(t *testing.T) {
 	f := newFixture(t, standard)
-	want(t, "-s", list(f.complete("issues", "ls", "-s", "")), "number updated created title")
+	want(t, "-s", list(f.complete("issues", "ls", "-s", "")), "number updated created title status")
 	want(t, "--sort=", list(f.complete("issues", "ls", "--sort=u")), "--sort=updated")
 	want(t, "--state", list(f.complete("issues", "ls", "--state", "")), "open closed all")
 	want(t, "-S", list(f.complete("issues", "ls", "-S", "c")), "closed")
@@ -82,8 +84,8 @@ func TestEnumValues(t *testing.T) {
 
 func TestMidLineFlags(t *testing.T) {
 	f := newFixture(t, standard)
-	want(t, "ls -s", list(f.complete("issues", "ls", "-s", "")), "number updated created title")
-	want(t, "ls -R erp -L", list(f.complete("issues", "ls", "-R", "erp", "-L", "")), "area::auth bug docs feature kind:bug")
+	want(t, "ls -s", list(f.complete("issues", "ls", "-s", "")), "number updated created title status")
+	want(t, "ls -R erp -L", list(f.complete("issues", "ls", "-R", "erp", "-L", "")), "area::auth auth bug docs feature kind:bug")
 	want(t, "ls -R web -L", list(f.complete("issues", "ls", "-R", "web", "-L", "")), "docs")
 	want(t, "ls -R", list(f.complete("issues", "ls", "-R", "")), "erp web")
 	want(t, "--repo=", list(f.complete("issues", "ls", "--repo=w")), "--repo=web")
@@ -104,8 +106,8 @@ func TestCombinedShortFlags(t *testing.T) {
 	if strings.Contains(got, " -rr ") {
 		t.Errorf("-r offered again: %s", got)
 	}
-	want(t, "-rs value", list(f.complete("issues", "ls", "-rs")), "-rsnumber -rsupdated -rscreated -rstitle")
-	want(t, "-rs then word", list(f.complete("issues", "ls", "-rs", "")), "number updated created title")
+	want(t, "-rs value", list(f.complete("issues", "ls", "-rs")), "-rsnumber -rsupdated -rscreated -rstitle -rsstatus")
+	want(t, "-rs then word", list(f.complete("issues", "ls", "-rs", "")), "number updated created title status")
 	want(t, "-rl5 inline value", list(f.complete("issues", "ls", "-rl5")), "")
 	want(t, "-rR then word", list(f.complete("issues", "ls", "-rR", "")), "erp web")
 	want(t, "-x unknown", list(f.complete("issues", "ls", "-x")), "")
@@ -114,7 +116,7 @@ func TestCombinedShortFlags(t *testing.T) {
 func TestLabelsStoredAndShort(t *testing.T) {
 	f := newFixture(t, standard)
 	r := f.complete("issues", "ls", "-L", "")
-	want(t, "labels", list(r), "area::auth bug docs feature kind:bug")
+	want(t, "labels", list(r), "area::auth auth bug docs feature kind:bug")
 	for _, c := range r.Cands {
 		if c.Value == "bug" && c.Desc != "short for kind:bug" {
 			t.Errorf("short label description: %q", c.Desc)
@@ -213,4 +215,67 @@ func TestRunCompleteFormat(t *testing.T) {
 	var b strings.Builder
 	RunComplete(f.opts(), []string{"issues", "claim", "erp#5"}, &b)
 	want(t, "wire format", b.String(), "erp#51\twidget: renders blank\nerp#50\tdocs: explain config lookup\n:4\n")
+}
+
+func TestWorkStatusFlagsAndSweep(t *testing.T) {
+	f := newFixture(t, standard)
+	if g := list(f.complete("issues", "sw")); g != "sweep" {
+		t.Errorf("sweep: %q", g)
+	}
+	want(t, "sweep --release", list(f.complete("issues", "sweep", "--r")), "--release")
+	for _, cmd := range []string{"ls", "frontier", "milestones show"} {
+		words := append([]string{"issues"}, strings.Fields(cmd)...)
+		got := " " + list(f.complete(append(words, "-")...)) + " "
+		for _, w := range []string{"-w", "--working", "-i", "--idle", "--status", "--show-status", "-B", "--labels", "-n", "--no-color", "--color"} {
+			if !strings.Contains(got, " "+w+" ") {
+				t.Errorf("%s - lacks %s: %s", cmd, w, got)
+			}
+		}
+	}
+	for _, cmd := range []string{"show", "claims"} {
+		if g := list(f.complete("issues", cmd, "--show")); g != "--show-status" {
+			t.Errorf("%s --show: %q", cmd, g)
+		}
+	}
+	want(t, "-B", list(f.complete("issues", "ls", "-B", "")), "full short none")
+	want(t, "--labels=", list(f.complete("issues", "ls", "--labels=s")), "--labels=short")
+	want(t, "--color", list(f.complete("issues", "ls", "--color", "")), "auto always never")
+	want(t, "frontier -s", list(f.complete("issues", "frontier", "-s", "")), "number updated created title status")
+	want(t, "prs has no status sort", list(f.complete("issues", "prs", "-s", "")), "number updated created title")
+	want(t, "--status", list(f.complete("issues", "ls", "--status", "")), "stale working in-review blocked ready open done")
+	want(t, "--status list", list(f.complete("issues", "ls", "--status", "working,s")), "working,stale")
+	want(t, "--status=", list(f.complete("issues", "ls", "--status=in")), "--status=in-review")
+	want(t, "-w is a bool", list(f.complete("issues", "ls", "-w", "-s", "st")), "status")
+	if g := list(f.complete("issues", "ls", "-w", "-")); strings.Contains(g, " -w") || strings.HasPrefix(g, "-w ") {
+		t.Errorf("-w offered twice: %s", g)
+	}
+}
+
+// -L accepts the stored name or the shown short name; completion offers both, and both find the same issues.
+func TestShortLabelCompletesAndFindsTheSameIssues(t *testing.T) {
+	f := newFixture(t, standard)
+	want(t, "complete bug", list(f.complete("issues", "ls", "-L", "bu")), "bug")
+	want(t, "complete kind:bug", list(f.complete("issues", "ls", "-L", "kind:b")), "kind:bug")
+	want(t, "area short", list(f.complete("issues", "ls", "-L", "au")), "auth")
+	runLs := func(label string) string {
+		var out, errb strings.Builder
+		code := issues.Main([]string{"--config", f.cfg, "ls", "-L", label, "-R", "erp", "-S", "all"}, issues.Env{
+			Getenv: func(k string) string {
+				if k == "ISSUES_NO_AUTOSYNC" {
+					return "1"
+				}
+				return ""
+			}, Out: &out, Err: &errb, Cwd: f.dir})
+		if code != 0 {
+			t.Fatalf("ls -L %s: %d %s", label, code, errb.String())
+		}
+		return out.String()
+	}
+	short, stored := runLs("bug"), runLs("kind:bug")
+	if short == "" || short != stored || strings.Count(short, "\n") != 3 {
+		t.Errorf("-L bug and -L kind:bug must list the same three issues:\n%q\n%q", short, stored)
+	}
+	if a, b := runLs("auth"), runLs("area::auth"); a == "" || a != b {
+		t.Errorf("-L auth vs -L area::auth:\n%q\n%q", a, b)
+	}
 }

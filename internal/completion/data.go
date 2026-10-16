@@ -24,8 +24,9 @@ func inAliases(alias string, only []string) bool {
 	return false
 }
 
-// ShortLabel is how a label is displayed: "kind:bug" shows as "bug" (the rule `ls` uses).
-func ShortLabel(l string) string { return strings.TrimLeft(strings.TrimPrefix(l, "kind:"), ":") }
+// ShortLabel is how a label is displayed in short mode: "kind:bug" shows as "bug", "area::auth" as "auth".
+// `ls -L` accepts it as well as the stored name.
+func ShortLabel(l string) string { return issues.LabelShort(l) }
 
 // RefFilter says which issues a command offers: claim only unclaimed open ones, release only claimed ones,
 // close only open ones, reopen only closed ones, everything else all of them.

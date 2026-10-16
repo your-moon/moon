@@ -1,12 +1,12 @@
-  REF     STATE  MILESTONE  LABELS           TITLE                      │ erp#510  open
-> erp#510 open              kind:feature     search: add filters        │ search: add filters
+  REF     STATE  STATUS LABELS       TITLE                              │ erp#510  open
+> erp#510 open   open   kind:feature search: add filters                │ search: add filters
                                                                         │
                                                                         │ labels: kind:feature
                                                                         │ milestone: -
                                                                         │ author: sam
                                                                         │ claim: none
+                                                                        │ status: open
                                                                         │ ──────────────────────────────────────────────
-                                                                        │
                                                                         │
                                                                         │
                                                                         │

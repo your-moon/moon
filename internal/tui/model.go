@@ -105,8 +105,8 @@ type Model struct {
 	reverse bool
 
 	fState, fLabel, fMilestone, fAlias string
-	fWorking                           bool   // w: only issues with status working
-	labelMode                          string // "" = by terminal width; else issues.LabelsFull, LabelsShort or LabelsNone
+	fWorking                           bool             // w: only issues with status working
+	labelMode                          string           // "" = by terminal width; else issues.LabelsFull, LabelsShort or LabelsNone
 	pq                                 completion.Query // the search box split into filter tokens
 
 	comp    compState // open Tab candidate list

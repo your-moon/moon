@@ -452,8 +452,8 @@ const helpText = `Keys
   j k, up down     move              g G      top, bottom
   pgup pgdn        page              ctrl-d u scroll the detail
   /                search (same match as ls -q: title or labels)
-                   tokens: label:bug milestone:"v1 beta" status:claimed repo:app
-                   (status also: open closed unclaimed stale; label: stored or short name)
+                   tokens: label:bug milestone:"v1 beta" status:working repo:app
+                   (status: working, in review, stale, blocked, ready, open, done; label: as -L)
   :                command line: claim release close reopen comment label milestone sort filter repo q
   tab              complete the word (in / : M f): one match fills it, several fill the common
                    prefix and list; tab again cycles, shift-tab goes back, esc closes the list

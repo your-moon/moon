@@ -135,7 +135,7 @@ func TestBashFunctionEndToEnd(t *testing.T) {
 	if got := join(bashComplete(t, bin, cfg, []string{"moon", "issues", "show", "erp#1"}, "moon issues show erp#1")); got != "erp#12|erp#11|erp#10|erp#1" {
 		t.Errorf("refs: %s", got)
 	}
-	if got := join(bashComplete(t, bin, cfg, []string{"moon", "issues", "ls", "-s", ""}, "moon issues ls -s ")); got != "number|updated|created|title" {
+	if got := join(bashComplete(t, bin, cfg, []string{"moon", "issues", "ls", "-s", ""}, "moon issues ls -s ")); got != "number|updated|created|title|status" {
 		t.Errorf("sort values: %s", got)
 	}
 	// a milestone with a space: escaped when unquoted, quote kept when the user opened one

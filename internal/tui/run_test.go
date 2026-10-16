@@ -6,14 +6,15 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/your-moon/moon/internal/issues"
 )
 
 func runWith(t *testing.T, term bool, env map[string]string) (int, string, int) {
 	t.Helper()
-	oldT, oldR := isTerminal, runProgram
-	defer func() { isTerminal, runProgram = oldT, oldR }()
+	oldT, oldR, oldProf, oldPal := isTerminal, runProgram, lipgloss.ColorProfile(), pal
+	defer func() { isTerminal, runProgram = oldT, oldR; lipgloss.SetColorProfile(oldProf); SetPalette(oldPal) }() // Run sets both globals
 	isTerminal = func(any) bool { return term }
 	started := 0
 	runProgram = func(tea.Model) error { started++; return nil }

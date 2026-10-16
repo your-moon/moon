@@ -39,7 +39,7 @@ var posKinds = map[string][]string{
 }
 
 var valueKinds = map[string]string{"repo": "repo", "label": "label", "add": "label", "remove": "label", "milestone": "milestone",
-	"body-file": "file", "limit": "number"}
+	"body-file": "file", "limit": "number", "status": "status"}
 
 // GlobalFlags are the options `moon issues` takes before the command.
 func GlobalFlags() []FlagInfo {
@@ -95,3 +95,10 @@ func Describe() []CmdInfo {
 	}
 	return out
 }
+
+// MatchLabel resolves what a person typed for -L to stored labels, exactly as `ls -L` does: the stored name,
+// else the shown short name (bug for kind:bug) or any suffix after a colon.
+func MatchLabel(want string, universe []string) []string { return matchLabel(want, universe) }
+
+// NormStatus maps what a person types for --status (in-review, review, WORKING) to a status name, "" if unknown.
+func NormStatus(s string) string { return normStatus(s) }

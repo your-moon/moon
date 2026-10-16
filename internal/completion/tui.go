@@ -99,14 +99,14 @@ func CommonPrefix(vals []string) string {
 var FilterKeys = []Candidate{
 	{"label:", "only issues with this label (stored or short name)"},
 	{"milestone:", "only issues in this milestone"},
-	{"status:", "open, closed, claimed, unclaimed or stale"},
+	{"status:", "working, in review, stale, blocked, ready, open or done"},
 	{"repo:", "only this repo alias"},
 }
 
-// StatusValues are the values of the status: filter.
+// StatusValues are the work statuses, the values of the status: filter (and of --status in the shell).
 var StatusValues = []Candidate{
-	{"open", "state is open"}, {"closed", "state is closed"}, {"claimed", "held by a live claim"},
-	{"unclaimed", "no live claim"}, {"stale", "the claim has expired"},
+	{"working", "a live claim"}, {"in review", "an open PR closes it"}, {"stale", "the claim expired or its process died"},
+	{"blocked", "labelled blocked"}, {"ready", "labelled ready, nobody on it"}, {"open", "open, nobody on it"}, {"done", "closed"},
 }
 
 // Query is a search box text split into filter tokens and free text.
@@ -167,14 +167,8 @@ func ParseQuery(q string) Query {
 
 // Match reports whether an item passes the filter tokens of the query (free text is the caller's).
 func (q Query) Match(it *issues.Item) bool {
-	for _, want := range q.Labels {
-		ok := false
-		for _, l := range it.Labels {
-			if l == want || ShortLabel(l) == want {
-				ok = true
-			}
-		}
-		if !ok {
+	for _, want := range q.Labels { // the same resolution as ls -L: stored name, shown short name, or suffix
+		if len(issues.MatchLabel(want, it.Labels)) == 0 {
 			return false
 		}
 	}
@@ -184,19 +178,14 @@ func (q Query) Match(it *issues.Item) bool {
 	if q.Repo != "" && it.Alias != q.Repo {
 		return false
 	}
-	live := it.Claim != nil && !it.Claim.Stale
-	switch q.Status {
-	case "":
-	case "open", "closed":
-		return it.State == q.Status
-	case "claimed":
-		return live
-	case "unclaimed":
-		return !live
-	case "stale":
-		return it.Claim != nil && it.Claim.Stale
-	default:
-		return false
+	if q.Status != "" {
+		ok := false
+		for _, w := range strings.Split(q.Status, ",") {
+			ok = ok || issues.NormStatus(w) == it.Work.Name
+		}
+		if !ok {
+			return false
+		}
 	}
 	return true
 }

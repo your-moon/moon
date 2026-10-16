@@ -337,6 +337,19 @@ func walk(src *lazy, ci *issues.CmdInfo, prev []string, cur string) Result {
 			if s := src.get(); s != nil {
 				c = Milestones(s, repos)
 			}
+		case "status": // a comma-separated list: complete the last name
+			head := ""
+			if i := strings.LastIndexByte(typed, ','); i >= 0 {
+				head, typed = typed[:i+1], typed[i+1:]
+			}
+			for _, v := range issues.StatusOrder {
+				c = append(c, Candidate{head + strings.ReplaceAll(v, " ", "-"), ""})
+			}
+			c = filterPrefix(c, head+typed, true)
+			for i := range c {
+				c[i].Value = prefix + c[i].Value
+			}
+			return Result{c, DirNoFiles}
 		case "file":
 			return Result{Dir: DirDefault}
 		default:
