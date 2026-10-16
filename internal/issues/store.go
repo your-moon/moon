@@ -42,6 +42,11 @@ type App struct {
 	TTY   bool
 	Width int
 	Color bool
+	// St draws colour (palette, depth); Forced: --color always. Both set by Main.
+	St     *Styler
+	Forced bool
+
+	lblCache map[string]map[string]string // labels.tsv by alias, read once
 }
 
 // exitError ends a command with a status code; Msg (if any) goes to stderr.
@@ -60,6 +65,17 @@ func die1(format string, args ...any) error {
 func (a *App) printf(format string, args ...any) { fmt.Fprintf(a.Out, format, args...) }
 func (a *App) println(s string)                  { fmt.Fprintln(a.Out, s) }
 
+// styler is the colour drawer when colour is on, else nil (which paints nothing).
+func (a *App) styler() *Styler {
+	if !a.Color {
+		return nil
+	}
+	return a.St
+}
+
+// P paints text in a palette role, or returns it unchanged when colour is off.
+func (a *App) P(role, text string) string { return a.styler().P(role, text) }
+
 func (a *App) outbox() string    { return filepath.Join(a.Home, "outbox") }
 func (a *App) claimsDir() string { return filepath.Join(a.Home, "claims") }
 func (a *App) localmap() string  { return filepath.Join(a.Home, "localmap.tsv") }
@@ -71,6 +87,12 @@ func (a *App) nowEpoch() float64 {
 		}
 	}
 	return float64(a.Now().UnixNano()) / 1e9
+}
+
+// workCtx is the clock, host and process check that claim staleness and work status depend on.
+func (a *App) workCtx() WorkCtx {
+	e := a.nowEpoch()
+	return WorkCtx{Now: time.Unix(int64(e), int64((e-float64(int64(e)))*1e9)), Host: a.Host, Alive: pidAlive}
 }
 
 func (a *App) nowISO() string { return a.Now().Format("2006-01-02T15:04:05") }
@@ -484,10 +506,7 @@ func pidAlive(pid int) bool {
 }
 
 func (a *App) claimIsStale(c *Claim) bool {
-	if a.nowEpoch()-c.TS > c.TTL { // M_ttl
-		return true
-	}
-	return c.Pid != 0 && c.Host == a.Host && !pidAlive(c.Pid) // M_pid
+	return claimExpired(c, a.workCtx())
 }
 
 func (a *App) claimStatus(ref string) (string, *Claim) {

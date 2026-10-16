@@ -55,11 +55,13 @@ func TestSortCyclesAndReverses(t *testing.T) {
 	eq(t, "created", refs(m), "app#7 app#5 app#4 app#3 app#2")
 	m = press(m, "s")
 	eq(t, "title", refs(m), "app#7 app#2 app#4 app#3 app#5")
+	m = press(m, "s") // no claims in this mirror: every issue is "open", ties keep the number order
+	eq(t, "status", refs(m), "app#7 app#5 app#4 app#3 app#2")
 	m = press(m, "s")
 	eq(t, "number again", refs(m), "app#7 app#5 app#4 app#3 app#2")
 	m = press(m, "r")
 	eq(t, "number reversed", refs(m), "app#2 app#3 app#4 app#5 app#7")
-	m = press(m, "s", "s", "s") // reverse persists across keys: title Z to A
+	m = press(m, "s", "s", "s") // updated, created, title; reverse persists across keys: title Z to A
 	eq(t, "title reversed", refs(m), "app#5 app#3 app#4 app#2 app#7")
 }
 

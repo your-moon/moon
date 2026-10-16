@@ -13,8 +13,8 @@ type helpEntry struct {
 }
 
 var helpTexts = map[string]helpEntry{
-	"ls": {"list issues from the local mirror", "moon issues ls [--repo R] [--state open|closed|all] [--label L] [--milestone M] [-q text]",
-		[2]string{"moon issues ls -L bug -s up -l 10", "moon issues ls -S all -q login -j   # or just: moon issues ls 10"}},
+	"ls": {"list issues from the local mirror, with their work status", "moon issues ls [--repo R] [--state open|closed|all] [--label L] [--milestone M] [-q text] [-w] [-i] [--status S[,S]] [-B full|short|none]",
+		[2]string{"moon issues ls -L bug -s up -l 10", "moon issues ls -w   # what agents are working on; -i = idle, -s status = by status"}},
 	"show": {"print one issue with its comments", "moon issues show <ref>",
 		[2]string{"moon issues show app#12", "moon issues show app#L-20260301120000-ab12   # an issue not pushed yet"}},
 	"milestones": {"list milestones with progress (open ones on a terminal, all when piped)", "moon issues milestones [--repo R] [--state open|closed|all] [--sort due|progress|title|open] [-r] [--limit N]",
@@ -25,14 +25,16 @@ var helpTexts = map[string]helpEntry{
 		[2]string{"moon issues prs -S merged --since 2026-01-01T00:00:00Z", "moon issues prs -S all -s up -l 5"}},
 	"pr show": {"print one pull request", "moon issues pr show <ref>",
 		[2]string{"moon issues pr show app#31", "moon issues pr show lib#4"}},
-	"frontier": {"open issues nobody has claimed", "moon issues frontier [--repo R] [--label L] [--milestone M]",
+	"frontier": {"open issues nobody has claimed", "moon issues frontier [--repo R] [--label L] [--milestone M] [-i] [--status S[,S]] [-B full|short|none]",
 		[2]string{"moon issues frontier -L kind:bug", "moon issues frontier -s t -l 5   # or just: moon issues frontier 5"}},
 	"claim": {"claim an issue for an agent (exit 3 when someone else holds it)", "moon issues claim <ref> --agent NAME [--ttl 120m] [--pid N]",
 		[2]string{"moon issues claim app#12 -a alice", "moon issues claim app#12 -a alice --ttl 4h"}},
 	"release": {"drop a claim", "moon issues release <ref> (--agent NAME | --force)",
 		[2]string{"moon issues release app#12 -a alice", "moon issues release app#12 --force"}},
-	"claims": {"list the live and stale claims", "moon issues claims",
+	"claims": {"list claims with the work status of their issue (a claim on a closed issue is flagged)", "moon issues claims [--show-status]",
 		[2]string{"moon issues claims", "moon issues claims -j"}},
+	"sweep": {"list claims that are stale or on closed issues; --release removes them (dry run by default)", "moon issues sweep [--release]",
+		[2]string{"moon issues sweep", "moon issues sweep --release"}},
 	"status": {"outbox and last-pull summary", "moon issues status",
 		[2]string{"moon issues status", "moon issues status -t"}},
 	"new": {"queue a new issue (sent by sync)", "moon issues new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--now]",
@@ -67,7 +69,12 @@ var flagHelp = map[string]string{
 	"json": "same as --format json", "since": "only items updated since this ISO time", "agent": "who you are", "ttl": "how long the claim lasts (e.g. 90m, 4h)",
 	"pid": "process that holds the claim", "force": "ignore who holds it", "title": "title", "body": "body text", "body-file": "read the body from a file, or - for stdin",
 	"add": "label to add (repeatable)", "remove": "label to remove (repeatable)", "now": "send it right away", "reason": "close reason",
-	"comment": "comment to post with the close", "full": "re-read everything", "quiet": "no output",
+	"comment": "comment to post with the close",
+	"working": "only issues being worked on now (status working)", "idle": "only issues nobody is on (status ready or open)",
+	"status":      "only these statuses, comma-separated: stale, working, in-review, blocked, ready, open, done (-w, -i and --status add up)",
+	"show-status": "add the work status as a trailing column (or line) to piped output", "release": "remove them (without it, only list)",
+	"labels": "full (stored names), short (kind:/area:/triage: dropped) or none; default by terminal width",
+	"color":  "auto, always (even piped, for less -R; needs a table), never", "full": "re-read everything", "quiet": "no output",
 }
 
 // commandNames lists what `moon issues <name>` accepts, with "pr show" as "pr".

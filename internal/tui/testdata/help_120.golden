@@ -3,8 +3,10 @@ Keys
   j k, up down     move              g G      top, bottom
   pgup pgdn        page              ctrl-d u scroll the detail
   /                search (same match as ls -q: title or labels)
-  s                cycle sort: number, updated, created, title
+  s                cycle sort: number, updated, created, title, status
   r                reverse the sort
+  w                only issues being worked on now (status working); again for all
+  l                labels column: full, short (kind:/area:/triage: dropped), hidden
   f                filter menu: state, label, milestone, clear
   tab              next repo alias (when several)
   enter  esc       open the detail full screen, go back
@@ -18,13 +20,11 @@ Keys
   mouse            wheel scrolls, click selects
 
 Marks: > selected, @ claimed, + has queued local writes.
+STATUS: working (a live claim), in review (an open PR closes it), stale (claim past its ttl or its
+process is gone), blocked, ready, open, done. done! = closed but a claim is still on file.
 
 Nothing is sent to GitHub from here. This view has no push, pull or sync;
 queued writes are sent later with: moon issues sync
 
-Press any key to close.
-
-
-
 any key closes
-5/7  state:open  sort:number↓  |  mirror pulled 5 min ago
+5/7  state:open  sort:number↓  labels:full  |  mirror pulled 5 min ago

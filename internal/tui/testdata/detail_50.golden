@@ -5,6 +5,7 @@
  milestone: v2
  author: sam
  claim: none
+ status: open
  ─────────────────────────────────────────────────
 
 
@@ -15,6 +16,5 @@
 
 
 
-
 j/k scroll  esc back  c claim  u release  x close…
-5/7  state:open  sort:number↓  |  mirror pulled 5…
+5/7  state:open  sort:number↓  labels:hidden  |  …
