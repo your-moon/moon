@@ -1,3 +1,4 @@
-REF     STATE      AGENT  HOST  PID  AGE  TTL
-app#12  in review  alice  box   -    20m  2h00m
+REF     REPO  STATE      AGENT  HOST  PID  AGE  TTL
+app#12  app   in review  alice  box   -    20m  2h00m
 --- stderr ---
+scope: all repos (not inside a project)

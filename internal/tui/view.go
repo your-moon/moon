@@ -463,6 +463,7 @@ const helpText = `Keys
   l                labels column: full, short (kind:/area:/triage: dropped), hidden
   f                filter menu: state, label, milestone, clear
   tab              next repo alias (when several)
+  a                all repos, or back to the project's repo (the scope shown in the footer)
   enter  esc       open the detail full screen, go back
   c  u             claim, release (agent: --agent or $USER)
                    refused when another agent holds the claim; never forced
@@ -615,6 +616,9 @@ func (m Model) footer() []string {
 		if f[1] != "" {
 			info += "  " + f[0] + ":" + oneLine(f[1])
 		}
+	}
+	if st := m.scopeText(); st != "" {
+		parts = append(parts, st)
 	}
 	parts = append(parts, info, pulled(m.snap))
 	if m.snap.Queued > 0 {

@@ -249,10 +249,26 @@ func walk(src *lazy, ci *issues.CmdInfo, prev []string, cur string) Result {
 	var pending *issues.FlagInfo
 	npos := 0
 	var repos []string
+	allRepos := false // -R all or --all
 	note := func(f *issues.FlagInfo, val string) {
-		if f.Name == "repo" && val != "" {
+		if f.Name == "repo" && val == "all" {
+			allRepos = true
+		} else if f.Name == "repo" && val != "" {
 			repos = append(repos, val)
 		}
+	}
+	// curRepos is the repos the line is about: the -R values, else the project scope, else all (nil)
+	curRepos := func(s Source) []string {
+		if allRepos {
+			return nil
+		}
+		if len(repos) > 0 {
+			return repos
+		}
+		if sc, ok := s.(scoped); ok {
+			return sc.Scope()
+		}
+		return nil
 	}
 	gl := globalFlagInfo()
 	lookup := func(long string, short byte) *issues.FlagInfo {
@@ -274,6 +290,9 @@ func walk(src *lazy, ci *issues.CmdInfo, prev []string, cur string) Result {
 			k, v, hv := strings.Cut(w[2:], "=")
 			if f := lookup(k, 0); f != nil {
 				used[flagKey(f)] = true
+				if f.Name == "all" {
+					allRepos = true
+				}
 				if f.Takes && !hv {
 					pending = f
 				} else if hv {
@@ -332,14 +351,15 @@ func walk(src *lazy, ci *issues.CmdInfo, prev []string, cur string) Result {
 				for _, a := range s.Aliases() {
 					c = append(c, Candidate{a, "repo alias"})
 				}
+				c = append(c, Candidate{"all", "every repo, not only this project"})
 			}
 		case "label":
 			if s := src.get(); s != nil {
-				c = Labels(s, repos)
+				c = Labels(s, curRepos(s))
 			}
 		case "milestone":
 			if s := src.get(); s != nil {
-				c = Milestones(s, repos)
+				c = Milestones(s, curRepos(s))
 			}
 		case "status": // a comma-separated list: complete the last name
 			head := ""
@@ -416,10 +436,20 @@ func walk(src *lazy, ci *issues.CmdInfo, prev []string, cur string) Result {
 	}
 	switch kind {
 	case "ref":
-		return Result{Refs(s, ci.Name, cur, repos), DirNoFiles}
+		rs := curRepos(s)
+		if len(rs) == 1 { // one repo in scope: a bare number (585, #585) is a ref too
+			if num := strings.TrimPrefix(cur, "#"); num != "" && strings.Trim(num, "0123456789") == "" {
+				var out []Candidate
+				for _, c := range Refs(s, ci.Name, rs[0]+"#"+num, rs) {
+					out = append(out, Candidate{cur[:len(cur)-len(num)] + strings.TrimPrefix(c.Value, rs[0]+"#"), c.Desc})
+				}
+				return Result{out, DirNoFiles}
+			}
+		}
+		return Result{Refs(s, ci.Name, cur, rs), DirNoFiles}
 	case "milestone":
 		state := map[string]string{"milestones close": "open", "milestones reopen": "closed"}[ci.Name]
-		c := MilestonesFor(s, repos, state, true)
+		c := MilestonesFor(s, curRepos(s), state, true)
 		if ci.Name == "milestone" {
 			c = append([]Candidate{{"none", "clear the milestone"}}, c...)
 		}

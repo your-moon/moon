@@ -14,10 +14,13 @@ type Repo struct {
 	Alias  string
 	GitHub string // owner/name; empty for a local-only repo
 	Local  bool   // local = true: issues live only in the mirror, nothing syncs
+	// Paths are folders that belong to this repo (see ResolveScope): "~/work/app", "/abs/path", or relative to moon.toml.
+	Paths []string
 }
 
 // Config is the parsed moon.toml. Parsed once at the boundary; nothing else reads the file.
 type Config struct {
+	Path      string // absolute path of the moon.toml that was read
 	Dir       string // directory holding moon.toml
 	MirrorDir string // absolute
 	Repos     []Repo // in file order
@@ -87,6 +90,7 @@ Create one, for example:
 //	[repos.<alias>]
 //	github = "owner/name"         # exactly one of github or local = true
 //	local = true                  # local-only tracker, never synced
+//	paths = ["~/work/app"]        # optional: folders that belong to this repo (project scope)
 //	[colors]                      # optional: theme = "light"|"dark", and any role = "#rrggbb" or an ANSI name
 func LoadConfig(path string) (*Config, error) {
 	f, err := os.Open(path)
@@ -98,7 +102,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Config{Dir: filepath.Dir(abs)}
+	c := &Config{Path: abs, Dir: filepath.Dir(abs)}
 	mirror := ""
 	var cur *Repo
 	inColors := false
@@ -140,6 +144,9 @@ func LoadConfig(path string) (*Config, error) {
 			if !aliasRe.MatchString(alias) {
 				return nil, fmt.Errorf("%s:%d: alias %q must match [a-z0-9_]+", path, n, alias)
 			}
+			if alias == "all" {
+				return nil, fmt.Errorf("%s:%d: alias \"all\" is reserved (-R all means every repo)", path, n)
+			}
 			for _, r := range c.Repos {
 				if r.Alias == alias {
 					return nil, fmt.Errorf("%s:%d: duplicate repo %q", path, n, alias)
@@ -167,6 +174,14 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("%s:%d: local must be true or false (unquoted), got %s", path, n, v)
 			}
 			cur.Local = v == "true"
+			continue
+		}
+		if cur != nil && k == "paths" {
+			list, err := parseStringList(v)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: paths %v", path, n, err)
+			}
+			cur.Paths = list
 			continue
 		}
 		if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' {
@@ -205,6 +220,34 @@ func LoadConfig(path string) (*Config, error) {
 		c.MirrorDir = filepath.Join(c.Dir, mirror)
 	}
 	return c, nil
+}
+
+// parseStringList reads a one-line TOML array of quoted strings: ["a", "b"].
+func parseStringList(v string) ([]string, error) {
+	if len(v) < 2 || v[0] != '[' || v[len(v)-1] != ']' {
+		return nil, fmt.Errorf("must be a one-line array of quoted strings, e.g. [\"~/work/app\", \"/srv/app\"]")
+	}
+	var out []string
+	rest := strings.TrimSpace(v[1 : len(v)-1])
+	for rest != "" {
+		if rest[0] != '"' {
+			return nil, fmt.Errorf("must be a one-line array of quoted strings, got %s", rest)
+		}
+		end := strings.IndexByte(rest[1:], '"')
+		if end < 0 {
+			return nil, fmt.Errorf("has an unterminated string")
+		}
+		out = append(out, rest[1:1+end])
+		rest = strings.TrimSpace(rest[2+end:])
+		if rest == "" {
+			break
+		}
+		if rest[0] != ',' {
+			return nil, fmt.Errorf("needs commas between strings")
+		}
+		rest = strings.TrimSpace(rest[1:])
+	}
+	return out, nil
 }
 
 func stripComment(s string) string {
@@ -271,7 +314,7 @@ func (a *App) splitLocal(shorts []string) (remote, local []string) {
 // noteLocalOnly prints the no-op message for local-only aliases when the user named one
 // (--repo) or when nothing else is left to sync.
 func (a *App) noteLocalOnly(o *Opts, local []string, remoteLeft int) {
-	if o.str("repo") == "" && remoteLeft > 0 {
+	if !a.scoped() && remoteLeft > 0 {
 		return
 	}
 	for _, s := range local {

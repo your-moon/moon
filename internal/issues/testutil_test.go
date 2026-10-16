@@ -60,6 +60,8 @@ type env struct {
 	tick  bool
 	tty   bool // pretend stdout is a terminal
 	width int
+	cwd   string        // working directory for the command; default: the config's folder
+	git   GitRemoteFunc // fake `git remote get-url origin`; default: no remote
 }
 
 func newEnv(t *testing.T) *env {
@@ -82,10 +84,24 @@ func (e *env) runIn(stdin string, args ...string) (string, string, int) {
 	var out, errb bytes.Buffer
 	code := Main(append([]string{"--config", e.cfg}, args...), Env{
 		Getenv: func(k string) string { return e.extra[k] },
-		Stdin:  strings.NewReader(stdin), Out: &out, Err: &errb, Cwd: filepath.Dir(e.cfg), GH: e.gh,
+		Stdin:  strings.NewReader(stdin), Out: &out, Err: &errb, Cwd: e.workdir(), GH: e.gh, GitRemote: e.gitFunc(),
 		Now: func() time.Time { return e.now }, TTY: e.tty, Width: e.width,
 	})
 	return out.String(), errb.String(), code
+}
+
+func (e *env) workdir() string {
+	if e.cwd != "" {
+		return e.cwd
+	}
+	return filepath.Dir(e.cfg)
+}
+
+func (e *env) gitFunc() GitRemoteFunc {
+	if e.git != nil {
+		return e.git
+	}
+	return func(string) (string, error) { return "", fmt.Errorf("fatal: not a git repository") }
 }
 
 func (e *env) app() *App {

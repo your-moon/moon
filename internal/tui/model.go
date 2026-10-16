@@ -39,6 +39,9 @@ type Options struct {
 	Agent     string // claim holder name
 	Editor    string // $EDITOR; empty falls back to a one-line prompt
 	MirrorDir string // shown when the mirror is missing
+	// Scope is the project scope: a single repo preselects its tab (a toggles all repos) and the footer names it.
+	// The zero value means no scope.
+	Scope issues.Scope
 }
 
 type sortKey int
@@ -141,6 +144,7 @@ func New(st Store, opt Options) Model {
 	in := textinput.New()
 	in.CharLimit = 0
 	m := Model{st: st, opt: opt, input: in, fState: "open", now: time.Now}
+	m.fAlias = m.scopeAlias()
 	m.reload()
 	return m
 }
@@ -504,6 +508,13 @@ func (m Model) common(s string) (tea.Model, tea.Cmd) {
 		m.labelMode = nextLabelMode(m.effLabelMode())
 	case "f":
 		m.mode, m.menu, m.menuCur = modeMenu, menuTop, 0
+	case "a":
+		if m.fAlias != "" {
+			m.fAlias = ""
+		} else {
+			m.fAlias = m.scopeAlias()
+		}
+		m.refilter()
 	case "tab":
 		if len(m.snap.Aliases) > 1 {
 			m.fAlias = nextAlias(m.snap.Aliases, m.fAlias)
@@ -670,6 +681,31 @@ func (m Model) keyPick(k tea.KeyMsg) Model {
 		m.pickCur = 0
 	}
 	return m
+}
+
+// scopeAlias is the one repo the dashboard opens on ("" when the scope is every repo or several).
+func (m Model) scopeAlias() string {
+	if s := m.opt.Scope; (s.Kind == issues.KindProject || s.Kind == issues.KindExplicit) && len(s.Repos) == 1 {
+		return s.Repos[0]
+	}
+	return ""
+}
+
+// scopeText is the footer part that says what the list covers; empty when no scope was given.
+func (m Model) scopeText() string {
+	s := m.opt.Scope
+	if s.Kind == "" {
+		return ""
+	}
+	switch want := m.scopeAlias(); {
+	case m.fAlias == "" && want != "":
+		return "scope: all repos (a: back to " + want + ")"
+	case m.fAlias == "":
+		return "scope: " + s.Label() + " (" + s.Reason + ")"
+	case m.fAlias == want:
+		return "scope: " + want + " (" + s.Reason + ")"
+	}
+	return "scope: " + m.fAlias + " (tab)"
 }
 
 func nextAlias(aliases []string, cur string) string {

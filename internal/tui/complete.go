@@ -21,6 +21,15 @@ func (s modelSource) Items() []issues.Item              { return s.m.snap.Items 
 func (s modelSource) Milestones() []issues.MilestoneRow { return s.m.st.Milestones() }
 func (s modelSource) PRs() []issues.PRItem              { return nil }
 
+// Scope is the repo the list is on (the project's repo unless a or tab changed it), so tab completion of refs,
+// labels and milestones offers that repo's; empty means every repo.
+func (s modelSource) Scope() []string {
+	if s.m.fAlias != "" {
+		return []string{s.m.fAlias}
+	}
+	return nil
+}
+
 func (m *Model) src() completion.Source { return modelSource{m} }
 
 // compState is an open candidate list. start and end are the byte span of the input that Tab replaces.

@@ -21,12 +21,8 @@ type Opts struct {
 
 func (o *Opts) str(k string) string { return o.S[k] }
 
-func (a *App) shortsFor(o *Opts) []string {
-	if r := o.str("repo"); r != "" {
-		return []string{r}
-	}
-	return a.Shorts()
-}
+// shortsFor is the repos a command works on: the project scope, -R, or every repo (see scope.go).
+func (a *App) shortsFor(o *Opts) []string { return a.scopeRepos() }
 
 type row struct {
 	ref, line                       string
@@ -394,7 +390,12 @@ func splitLines(s string) []string {
 
 func (a *App) cmdStatus(o *Opts) error {
 	v := a.resolveView(o, false)
-	ops := a.loadOutbox()
+	var ops []*Op
+	for _, op := range a.loadOutbox() {
+		if a.inScope(shortOf(op.Ref)) {
+			ops = append(ops, op)
+		}
+	}
 	errs := 0
 	for _, op := range ops {
 		if op.LastError != nil && *op.LastError != "" {
@@ -409,7 +410,7 @@ func (a *App) cmdStatus(o *Opts) error {
 		local  bool
 	}
 	var stats []repoStat
-	for _, short := range a.Shorts() {
+	for _, short := range a.scopeRepos() {
 		if a.localOnly(short) {
 			stats = append(stats, repoStat{short: short, n: len(a.readIndex(short)), local: true})
 			continue
@@ -590,6 +591,9 @@ func (a *App) cmdClaims(o *Opts) error {
 		}
 		c := a.readClaim(filepath.Join(a.claimsDir(), n))
 		if c == nil {
+			continue
+		}
+		if !a.inScope(shortOf(strings.Replace(strings.TrimSuffix(n, ".json"), "-", "#", 1))) {
 			continue
 		}
 		st := "fresh"

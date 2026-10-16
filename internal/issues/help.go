@@ -13,6 +13,8 @@ type helpEntry struct {
 }
 
 var helpTexts = map[string]helpEntry{
+	"where": {"show which repos commands default to here, why, and which rule matched", "moon issues where [-R alias ...] [--all]",
+		[2]string{"moon issues where", "moon issues where -R all   # what --all would look at"}},
 	"ls": {"list issues from the local mirror, with their work status", "moon issues ls [--repo R] [--state open|closed|all] [--label L] [--milestone M] [-q text] [-w] [-i] [--status S[,S]] [-B full|short|none]",
 		[2]string{"moon issues ls -L bug -s up -l 10", "moon issues ls -w   # what agents are working on; -i = idle, -s status = by status"}},
 	"show": {"print one issue with its comments", "moon issues show <ref>",
@@ -72,7 +74,8 @@ var helpTexts = map[string]helpEntry{
 }
 
 var flagHelp = map[string]string{
-	"repo": "only this repo alias", "fresh": "sync first, then read", "state": "which items", "label": "only this label",
+	"repo": "only this repo alias (repeatable); -R all = every repo. Default: the project you are in, else all repos",
+	"all":  "every configured repo, not only the project you are in (same as -R all)", "fresh": "sync first, then read", "state": "which items", "label": "only this label",
 	"milestone": "only this milestone (case-insensitive, or a unique prefix)", "q": "substring of title or labels", "format": "auto (table on a terminal, tsv when piped), table, tsv, json",
 	"no-color": "no colours (also off when NO_COLOR is set or stdout is not a terminal)",
 	"sort":     "number, created, updated: newest first; title: A-Z; due: soonest first; progress, open: highest first", "reverse": "reverse the sort order", "limit": "show at most N rows (0 = all; default 30 on a terminal)",

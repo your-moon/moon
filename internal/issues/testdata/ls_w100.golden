@@ -1,9 +1,10 @@
-REF     STATE   STATUS             LABELS        TITLE
-app#12  open    in review: PR #31  bug,ui        login: button does nothing on Safari when the sess…
-app#9   open    open               feature       export: add CSV download
-app#8   open    open               cleanup,docs  docs: quickstart mentions a removed flag
-app#5   closed  done               bug           search: Slow on big projects
-app#4   open    open               -             search: slow on big projects
-lib#3   open    open               bug           parser: crashes on empty input
+REF     REPO  STATE   STATUS             LABELS        TITLE
+app#12  app   open    in review: PR #31  bug,ui        login: button does nothing on Safari when th…
+app#9   app   open    open               feature       export: add CSV download
+app#8   app   open    open               cleanup,docs  docs: quickstart mentions a removed flag
+app#5   app   closed  done               bug           search: Slow on big projects
+app#4   app   open    open               -             search: slow on big projects
+lib#3   lib   open    open               bug           parser: crashes on empty input
 --- stderr ---
+scope: all repos (not inside a project)
 showing 6 of 6

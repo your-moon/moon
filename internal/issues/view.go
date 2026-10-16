@@ -143,6 +143,11 @@ func (a *App) listRows(o *Opts, rows []row) error {
 			mode = LabelModeFor(a.Width)
 		}
 		cols := []col{{head: "REF", max: 18}, {head: "STATE", max: 6}, {head: "STATUS", max: 28}}
+		multi := a.multiRepo()
+		if multi { // a list over several repos says which repo each row is from
+			cols = append([]col{{head: "REF", max: 18}, {head: "REPO", max: 14}}, cols[1:]...)
+		}
+		lc := len(cols) // index of the LABELS column, when there is one
 		if mode != LabelsNone {
 			texts := make([]string, len(rows))
 			for i, r := range rows {
@@ -153,9 +158,13 @@ func (a *App) listRows(o *Opts, rows []row) error {
 		cols = append(cols, col{head: "TITLE", flex: true})
 		cells := make([][]cell, len(rows))
 		for i, r := range rows {
-			c := []cell{{s: r.ref, color: cBold}, {s: r.state, color: stateColor(r.state)}, {s: r.work.Label(), color: statusColor(r.work.Name)}}
+			c := []cell{{s: r.ref, color: cBold}}
+			if multi {
+				c = append(c, plain(shortOf(r.ref)))
+			}
+			c = append(c, cell{s: r.state, color: stateColor(r.state)}, cell{s: r.work.Label(), color: statusColor(r.work.Name)})
 			if mode != LabelsNone {
-				c = append(c, a.labelCell(shortOf(r.ref), splitNonEmpty(r.labels), mode, cols[3].max))
+				c = append(c, a.labelCell(shortOf(r.ref), splitNonEmpty(r.labels), mode, cols[lc].max))
 			}
 			cells[i] = append(c, plain(r.title))
 		}
@@ -255,15 +264,22 @@ func (a *App) printPRs(o *Opts, rows []prItem) {
 			return
 		}
 		cells := make([][]cell, len(rows))
+		multi := a.multiRepo()
 		for i, it := range rows {
 			st := it.row.State
 			if it.row.Draft == "1" {
 				st += " draft"
 			}
 			cells[i] = []cell{{s: it.short + "#" + it.row.Number, color: cBold}, {s: st, color: stateColor(it.row.State)}, plain(it.row.HeadRef), plain(it.row.Title)}
+			if multi {
+				cells[i] = append([]cell{cells[i][0], plain(it.short)}, cells[i][1:]...)
+			}
 		}
-		fmt.Fprint(a.Out, renderTable([]col{{head: "REF", max: 18}, {head: "STATE", max: 12}, {head: "BRANCH", max: 30}, {head: "TITLE", flex: true}},
-			cells, a.Width, a.styler()))
+		cols := []col{{head: "REF", max: 18}, {head: "STATE", max: 12}, {head: "BRANCH", max: 30}, {head: "TITLE", flex: true}}
+		if multi {
+			cols = append([]col{cols[0], {head: "REPO", max: 14}}, cols[1:]...)
+		}
+		fmt.Fprint(a.Out, renderTable(cols, cells, a.Width, a.styler()))
 		a.footer(len(rows), total)
 	default:
 		for _, it := range rows {
@@ -298,6 +314,7 @@ func (a *App) claimsTable(rows [][]string, sts []Status, js []any, o *Opts) {
 			return
 		}
 		cells := make([][]cell, len(rows))
+		multi := a.multiRepo()
 		for i, r := range rows {
 			rest := ""
 			if sts[i].Name == StDone || sts[i].Name == StStale { // dead weight: dim the row
@@ -305,9 +322,15 @@ func (a *App) claimsTable(rows [][]string, sts []Status, js []any, o *Opts) {
 			}
 			cells[i] = []cell{{s: r[0], color: cBold}, {s: sts[i].Word(), color: statusColor(sts[i].Name)}, {s: r[2], color: rest}, {s: r[3], color: rest},
 				{s: r[4], color: rest}, {s: r[5], color: rest}, {s: r[6], color: rest}}
+			if multi {
+				cells[i] = append([]cell{cells[i][0], plain(shortOf(r[0]))}, cells[i][1:]...)
+			}
 		}
-		fmt.Fprint(a.Out, renderTable([]col{{head: "REF"}, {head: "STATE"}, {head: "AGENT", max: 24}, {head: "HOST", max: 24}, {head: "PID"},
-			{head: "AGE"}, {head: "TTL"}}, cells, a.Width, a.styler()))
+		cols := []col{{head: "REF"}, {head: "STATE"}, {head: "AGENT", max: 24}, {head: "HOST", max: 24}, {head: "PID"}, {head: "AGE"}, {head: "TTL"}}
+		if multi {
+			cols = append([]col{cols[0], {head: "REPO", max: 14}}, cols[1:]...)
+		}
+		fmt.Fprint(a.Out, renderTable(cols, cells, a.Width, a.styler()))
 	default:
 		for i, r := range rows {
 			a.printf("%s\t%s\t%s\t%s\tpid=%s\tage=%ss\tttl=%ss", r[0], r[1], r[2], r[3], r[4], r[5], r[6])
