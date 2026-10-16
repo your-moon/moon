@@ -27,6 +27,7 @@ from the current directory, then `$XDG_CONFIG_HOME/moon/moon.toml` (default `~/.
 Put a `moon.toml` in that last place to run `moon issues` from any directory.
 Each `[repos.<alias>]` declares one repository (`github = "owner/name"`, alias is lowercase `[a-z0-9_]+`); refs look like
 `<alias>#123`. The optional top-level `mirror_dir = "path"` (default `.moon/issues` beside `moon.toml`) holds the mirror.
+The optional top-level `claim_ttl = "30m"` is the default lease for `moon issues claim` when `--ttl` is not given (120m when absent). A claim with no `--pid` looks alive until its lease ends, so a short lease keeps a killed agent from looking busy for hours; the agent keeps its claim alive by running `claim` again with the same `--agent` (that renews it).
 
 ## Using it day to day
 
@@ -127,6 +128,7 @@ unit-tested for every transition and the priority order.
     moon issues claims                 # STATE is the same word; a claim on a closed issue says "done (stale claim)"
     moon issues sweep                  # list claims that are stale or on closed issues (dry run)
     moon issues sweep --release        # release them; a fresh claim on an open issue is never touched
+    moon issues sweep --live --agent sonnet-17 --release   # stop work: also drop that agent's LIVE claims (dry run without --release)
 
 `-w`, `-i` and `--status` add up (`-w -i` is working or idle). Piped output keeps its exact bytes; a trailing status column
 (or, for `show`, a `status:` line right after `claim:`) is added only when you ask: `--show-status`, `-w`, `-i`,

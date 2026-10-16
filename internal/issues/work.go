@@ -408,7 +408,12 @@ type sweepItem struct {
 
 // sweepable lists the claims that should go: on a closed issue, or stale (past TTL or dead pid). A fresh
 // claim on an open issue is never listed.
-func (a *App) sweepable() []sweepItem {
+func (a *App) sweepable() []sweepItem { return a.sweepableFor(false, "") }
+
+// sweepableFor is sweepable plus two switches for stopping work: live also lists FRESH claims on open issues (an
+// agent that was killed cannot release its claim, and a claim with no pid looks alive until its lease runs out), and
+// agent keeps only the claims that agent holds.
+func (a *App) sweepableFor(live bool, agent string) []sweepItem {
 	we := a.newWorkEnv()
 	refs := make([]string, 0, len(we.claims))
 	for r := range we.claims {
@@ -428,7 +433,12 @@ func (a *App) sweepable() []sweepItem {
 			reason = "issue closed"
 		case claimExpired(c, we.ctx):
 			reason = "stale"
+		case live:
+			reason = "live claim, released on request"
 		default:
+			continue
+		}
+		if agent != "" && c.Agent != agent {
 			continue
 		}
 		out = append(out, sweepItem{ref, reason, c.Agent, int(we.ctx.Now.Unix() - int64(c.TS)), c.TS})
@@ -440,7 +450,7 @@ func (a *App) sweepable() []sweepItem {
 // claim on an open issue, and a claim that changed since it was listed is left alone.
 func (a *App) cmdSweep(o *Opts) error {
 	v := a.resolveView(o, false)
-	items := a.sweepable()
+	items := a.sweepableFor(o.B["live"], o.str("agent"))
 	release := o.B["release"]
 	released := map[string]bool{}
 	if release {

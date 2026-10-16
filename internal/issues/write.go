@@ -572,7 +572,14 @@ func (a *App) cmdClaim(o *Opts) error {
 	}
 	os.MkdirAll(a.claimsDir(), 0o755)
 	path, _ := a.claimPath(ref)
-	ttl, err := parseTTL(o.str("ttl"))
+	ttlStr := o.str("ttl")
+	if ttlStr == "" {
+		ttlStr = "120m"
+		if a.Cfg != nil && a.Cfg.ClaimTTL != "" {
+			ttlStr = a.Cfg.ClaimTTL
+		}
+	}
+	ttl, err := parseTTL(ttlStr)
 	if err != nil {
 		return err
 	}
