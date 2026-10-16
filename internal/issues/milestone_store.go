@@ -326,12 +326,12 @@ func (a *App) expandMsRef(o *Opts) error {
 	if !msRefRe.MatchString(typed) {
 		return nil
 	}
-	short := o.str("repo")
-	if short == "" && len(o.Pos) > 0 {
+	short := ""
+	if len(o.Pos) > 0 {
 		short, _, _ = a.parseRef(o.Pos[0])
 	}
-	if short == "" && len(a.Repos) == 1 {
-		short = a.Repos[0].Alias
+	if repos := a.scopeRepos(); short == "" && len(repos) == 1 { // -R, the project, or the only configured repo
+		short = repos[0]
 	}
 	if short == "" {
 		return die("milestone %s is per repo: add --repo", typed)
@@ -356,11 +356,8 @@ func msDup(recs []msRec, title string, skip string) *msRec {
 
 // msRepo picks the alias for a command that names no milestone: --repo, else the only configured alias.
 func (a *App) msRepo(o *Opts) (string, error) {
-	if r := o.str("repo"); r != "" {
-		return r, nil
-	}
-	if len(a.Repos) == 1 {
-		return a.Repos[0].Alias, nil
+	if repos := a.scopeRepos(); len(repos) == 1 { // -R, the project you are in, or the only configured repo
+		return repos[0], nil
 	}
 	return "", die("which repo? pass --repo (-R) with one of: %s", strings.Join(a.Shorts(), ", "))
 }
@@ -368,10 +365,7 @@ func (a *App) msRepo(o *Opts) (string, error) {
 // msFindRepo finds the alias and record for a typed title or M-<n>: --repo if given, else the only
 // alias that has it.
 func (a *App) msFindRepo(o *Opts, typed string) (string, msRec, error) {
-	shorts := a.Shorts()
-	if r := o.str("repo"); r != "" {
-		shorts = []string{r}
-	}
+	shorts := a.scopeRepos()
 	type hit struct {
 		short string
 		rec   msRec

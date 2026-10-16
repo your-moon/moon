@@ -87,11 +87,11 @@ func TestMidLineFlags(t *testing.T) {
 	want(t, "ls -s", list(f.complete("issues", "ls", "-s", "")), "number updated created title status")
 	want(t, "ls -R erp -L", list(f.complete("issues", "ls", "-R", "erp", "-L", "")), "area::auth auth bug docs feature kind:bug")
 	want(t, "ls -R web -L", list(f.complete("issues", "ls", "-R", "web", "-L", "")), "docs")
-	want(t, "ls -R", list(f.complete("issues", "ls", "-R", "")), "erp web")
+	want(t, "ls -R", list(f.complete("issues", "ls", "-R", "")), "erp web all")
 	want(t, "--repo=", list(f.complete("issues", "ls", "--repo=w")), "--repo=web")
 	// the config can come from the line
-	want(t, "--config before cmd", list(f.complete("issues", "--config", f.cfg, "ls", "-R", "")), "erp web")
-	want(t, "--config after cmd", list(f.complete("issues", "ls", "--config="+f.cfg, "-R", "")), "erp web")
+	want(t, "--config before cmd", list(f.complete("issues", "--config", f.cfg, "ls", "-R", "")), "erp web all")
+	want(t, "--config after cmd", list(f.complete("issues", "ls", "--config="+f.cfg, "-R", "")), "erp web all")
 }
 
 func TestCombinedShortFlags(t *testing.T) {
@@ -109,7 +109,7 @@ func TestCombinedShortFlags(t *testing.T) {
 	want(t, "-rs value", list(f.complete("issues", "ls", "-rs")), "-rsnumber -rsupdated -rscreated -rstitle -rsstatus")
 	want(t, "-rs then word", list(f.complete("issues", "ls", "-rs", "")), "number updated created title status")
 	want(t, "-rl5 inline value", list(f.complete("issues", "ls", "-rl5")), "")
-	want(t, "-rR then word", list(f.complete("issues", "ls", "-rR", "")), "erp web")
+	want(t, "-rR then word", list(f.complete("issues", "ls", "-rR", "")), "erp web all")
 	want(t, "-x unknown", list(f.complete("issues", "ls", "-x")), "")
 }
 
@@ -222,7 +222,7 @@ func TestWorkStatusFlagsAndSweep(t *testing.T) {
 	if g := list(f.complete("issues", "sw")); g != "sweep" {
 		t.Errorf("sweep: %q", g)
 	}
-	want(t, "sweep --release", list(f.complete("issues", "sweep", "--r")), "--release")
+	want(t, "sweep --release", list(f.complete("issues", "sweep", "--r")), "--release --repo")
 	for _, cmd := range []string{"ls", "frontier", "milestones show"} {
 		words := append([]string{"issues"}, strings.Fields(cmd)...)
 		got := " " + list(f.complete(append(words, "-")...)) + " "

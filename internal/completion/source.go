@@ -58,6 +58,17 @@ func (s *SessionSource) PRs() []issues.PRItem {
 	return s.prs
 }
 
+// Scope is the repos commands default to here (the project the working directory belongs to); empty means every repo.
+func (s *SessionSource) Scope() []string {
+	if sc := s.S.Scope(); sc.Kind != issues.KindGlobal {
+		return sc.Repos
+	}
+	return nil
+}
+
+// scoped is implemented by a Source that knows the project scope; a Source without it offers every repo.
+type scoped interface{ Scope() []string }
+
 // OpenSession finds the config exactly as the CLI does (--config, $MOON_CONFIG, moon.toml upward, the user
 // config) and returns its mirror, or nil when there is none. It never prints.
 func OpenSession(config, dir string, e issues.Env) Source {

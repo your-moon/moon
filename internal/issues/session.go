@@ -70,10 +70,16 @@ type Session struct {
 	app     *App
 	created map[string]string
 	pal     Palette
+	scope   Scope
 }
 
 // NewSession finds and loads the config exactly as `moon issues` does. dir overrides the mirror directory.
 func NewSession(cfgPath, dir string, e Env) (*Session, error) {
+	return NewSessionScoped(cfgPath, dir, e, ScopeOpts{})
+}
+
+// NewSessionScoped is NewSession with -R/--all flags for the project scope (see ResolveScope).
+func NewSessionScoped(cfgPath, dir string, e Env, opt ScopeOpts) (*Session, error) {
 	p, err := FindConfig(cfgPath, e.Cwd, e.Getenv)
 	if err != nil {
 		return nil, err
@@ -93,8 +99,18 @@ func NewSession(cfgPath, dir string, e Env) (*Session, error) {
 	}
 	a := &App{Home: home, GH: ExecGH{}, Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
 		Environ: e.Getenv, Repos: cfg.Repos}
-	return &Session{app: a, created: map[string]string{}, pal: NewPalette(DetectTheme(e.Getenv, cfg.Colors.Theme), cfg.Colors.Overrides)}, nil
+	git := e.GitRemote
+	if git == nil {
+		git = GitRemoteOrigin
+	}
+	if opt.Home == "" {
+		opt.Home = e.Getenv("HOME")
+	}
+	return &Session{app: a, created: map[string]string{}, scope: ResolveScope(e.Cwd, cfg, git, opt), pal: NewPalette(DetectTheme(e.Getenv, cfg.Colors.Theme), cfg.Colors.Overrides)}, nil
 }
+
+// Scope is the repos the dashboard opens on: the project the working directory belongs to, or every repo.
+func (s *Session) Scope() Scope { return s.scope }
 
 // Palette is the colour palette of the config's theme, for the terminal UI.
 func (s *Session) Palette() Palette { return s.pal }

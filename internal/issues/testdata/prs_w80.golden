@@ -1,6 +1,7 @@
-REF     STATE       BRANCH      TITLE
-app#31  open        fix-login   login: handle expired cookie
-app#30  merged      csv-export  export: CSV download
-app#29  open draft  wip-search  search: index tuning
+REF     REPO  STATE       BRANCH      TITLE
+app#31  app   open        fix-login   login: handle expired cookie
+app#30  app   merged      csv-export  export: CSV download
+app#29  app   open draft  wip-search  search: index tuning
 --- stderr ---
+scope: all repos (not inside a project)
 showing 3 of 3

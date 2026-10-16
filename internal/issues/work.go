@@ -417,6 +417,9 @@ func (a *App) sweepable() []sweepItem {
 	sort.Strings(refs)
 	var out []sweepItem
 	for _, ref := range refs {
+		if !a.inScope(shortOf(ref)) { // the project you are in; --all sweeps every repo
+			continue
+		}
 		c := we.claims[ref]
 		st := a.claimWork(we, ref)
 		reason := ""

@@ -64,7 +64,7 @@ func cat(l ...[]fl) []fl {
 
 func commands() map[string]*spec {
 	one := func(f ...fl) flset { return f }
-	return map[string]*spec{
+	m := map[string]*spec{
 		"ls": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
 			fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}, fl{name: "q", short: "q", kind: 's'}).with(fmtFls(), issueListFls()), read: true, run: (*App).cmdLs},
 		"show": {fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), npos: 1, read: true, run: (*App).cmdShow},
@@ -89,7 +89,7 @@ func commands() map[string]*spec {
 		"claims":  {fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), read: true, run: (*App).cmdClaims},
 		"sweep":   {fls: one(freshFl(), fl{name: "release", kind: 'b'}).with(fmtFls()), read: true, run: (*App).cmdSweep},
 		"status":  {fls: fmtFls(), run: (*App).cmdStatus},
-		"new": {fls: cat(one(fl{name: "repo", kind: 's', req: true}, fl{name: "title", kind: 's', req: true}, fl{name: "label", kind: 'a'},
+		"new": {fls: cat(one(repoFl(), fl{name: "title", kind: 's', req: true}, fl{name: "label", kind: 'a'},
 			fl{name: "milestone", kind: 's'}, fl{name: "now", kind: 'b'}), bodyFls()), run: (*App).cmdNew},
 		"comment": {fls: bodyFls(), npos: 1, run: func(a *App, o *Opts) error { return a.cmdSimple("comment")(o) }},
 		"close": {fls: one(fl{name: "reason", kind: 's', choices: []string{"completed", "not_planned"}, def: "completed"},
@@ -104,7 +104,20 @@ func commands() map[string]*spec {
 		"pull":  {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
 		"prune": {fls: one(repoFl()), run: (*App).cmdPrune},
 		"sync":  {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
+		"where": {run: (*App).cmdWhere},
 	}
+	// every command can be pointed at repos with -R (repeatable) and widened with --all; see scope.go
+	for _, sp := range m {
+		has := false
+		for _, f := range sp.fls {
+			has = has || f.name == "repo"
+		}
+		if !has {
+			sp.fls = append(sp.fls, repoFl())
+		}
+		sp.fls = append(sp.fls, fl{name: "all", kind: 'b'})
+	}
+	return m
 }
 
 const usageText = `usage: moon issues [--config FILE] [--dir MIRROR] <command> [options]
@@ -121,6 +134,7 @@ commands:
   new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--now]
   comment|close|reopen|label|milestone|edit <ref> ...
   push [--repo R]   pull [--repo R] [--full]   sync [--repo R] [--quiet]   prune [--repo R]
+  where                          which repos commands default to here, and why
 
 Reading commands (ls frontier prs claims status milestones show) also take:
   --format auto|table|tsv|json   auto = table on a terminal, tab-separated when piped
@@ -143,6 +157,12 @@ Short flags (the same in every command that has the long one; they combine: -rl5
   --sort values may be abbreviated (-s up = updated); "moon issues ls 10" shows 10 rows.
 
 moon issues <command> --help shows the options and two examples for that command.
+Projects and scope (moon issues where shows what applies here and why). Commands default to one repo when you are in a project:
+  1. -R/--repo ALIAS (repeatable) names the repos; -R all or --all means every repo
+  2. a moon.toml in this folder or a parent that declares exactly one repo
+  3. paths = ["~/work/app"] under [repos.<alias>] (longest path wins; covers folders that are not git repos)
+  4. the git remote "origin", matched to a repo's github = "owner/name" (case-insensitive)
+  5. otherwise every repo. A bare number (585, #585) means that repo; in all-repos mode it must exist in exactly one.
 Refs: <alias>#123, or <alias>#L-<id> for a local issue not pushed yet.
 Aliases come from [repos.<alias>] in moon.toml. Env: ISSUES_NO_AUTOSYNC, ISSUES_KEEP_DAYS, ISSUES_GH, NO_COLOR.
 `
@@ -224,7 +244,7 @@ func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, e
 	set := func(f *fl, val string) error {
 		choices := f.choices
 		if f.name == "repo" {
-			choices = aliases
+			choices = append(append([]string{}, aliases...), "all")
 		} else if len(choices) > 0 && !contains(choices, val) {
 			if full, ok := uniquePrefix(val, choices); ok {
 				val = full
@@ -239,6 +259,9 @@ func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, e
 			}
 		}
 		o.Seen[f.name] = true
+		if f.name == "repo" { // -R is repeatable: the scope takes them all
+			o.L["repo"] = append(o.L["repo"], val)
+		}
 		if f.kind == 'a' {
 			o.L[f.name] = append(o.L[f.name], val)
 		} else {
@@ -345,7 +368,9 @@ type Env struct {
 	Err    io.Writer
 	Cwd    string
 	GH     GitHub // nil: the real gh
-	Now    func() time.Time
+	// GitRemote returns the origin URL of the checkout around a directory (project scope); nil: run git.
+	GitRemote GitRemoteFunc
+	Now       func() time.Time
 	// TTY is true when Out is a terminal; Width is its column count (0 = unknown, 100 is used).
 	TTY   bool
 	Width int
@@ -444,7 +469,11 @@ func Main(args []string, e Env) int {
 	if gh == nil {
 		gh = ExecGH{Bin: e.Getenv("ISSUES_GH")}
 	}
-	a := &App{Home: home, GH: gh, Out: e.Out, Err: e.Err, Stdin: e.Stdin, Now: e.Now, Host: host, Environ: e.Getenv,
+	git := e.GitRemote
+	if git == nil {
+		git = GitRemoteOrigin
+	}
+	a := &App{Cfg: cfg, Cwd: e.Cwd, GitRemote: git, ConfigSource: configSource(cfgPath, e.Cwd, e.Getenv, cfg), Home: home, GH: gh, Out: e.Out, Err: e.Err, Stdin: e.Stdin, Now: e.Now, Host: host, Environ: e.Getenv,
 		Repos: cfg.Repos, SpawnSync: spawnSync, TTY: e.TTY, Width: e.Width}
 	if a.Width <= 0 {
 		a.Width = defaultWidth
@@ -453,6 +482,18 @@ func Main(args []string, e Env) int {
 	if err != nil {
 		fmt.Fprintln(e.Err, err)
 		return 2
+	}
+	if e.Cwd != "" {
+		a.Scope = ResolveScope(e.Cwd, cfg, git, ScopeOpts{Flags: o.L["repo"], All: o.B["all"], Home: e.Getenv("HOME")})
+	}
+	delete(o.S, "repo") // from here on the scope is the only source of the repo filter
+	if refCommands[name] {
+		ref, err := a.bareRef(o.Pos[0])
+		if err != nil {
+			fmt.Fprintln(e.Err, err)
+			return 2
+		}
+		o.Pos[0] = ref
 	}
 	caps := DetectColor(e.Getenv, e.TTY, o.B["no-color"], o.str("color"))
 	a.Color, a.Forced = caps.On, caps.Forced
@@ -463,6 +504,7 @@ func Main(args []string, e Env) int {
 			return 2
 		}
 	}
+	a.printScopeHeader(name, o)
 	if err := sp.run(a, o); err != nil {
 		if ee, ok := err.(*exitError); ok {
 			if ee.Msg != "" {
@@ -529,7 +571,7 @@ func (a *App) autosync(name string, o *Opts, cfgPath string) error {
 		return nil
 	}
 	if o.B["fresh"] { // M_fresh
-		a.doSync(shorts, false, a.Err, "")
+		a.doSync(shorts, false, a.Err, nil)
 		return nil
 	}
 	if a.Environ("ISSUES_NO_AUTOSYNC") != "" {
@@ -573,7 +615,7 @@ func spawnSync(a *App) error {
 		return err
 	}
 	defer log.Close()
-	cmd := exec.Command(self, "issues", "--dir", a.Home, "sync", "--quiet")
+	cmd := exec.Command(self, "issues", "--dir", a.Home, "sync", "--quiet", "--all")
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.Env = append(os.Environ(), "ISSUES_NO_AUTOSYNC=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

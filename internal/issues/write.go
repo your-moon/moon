@@ -290,7 +290,10 @@ func (a *App) cmdNew(o *Opts) error {
 	if err != nil {
 		return err
 	}
-	repo := o.str("repo")
+	repo, err := a.scopeNeedsOne("new")
+	if err != nil {
+		return err
+	}
 	labels := o.L["label"]
 	if labels == nil {
 		labels = []string{}
@@ -426,16 +429,26 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 	}
 }
 
+// pushRepos pushes the outbox of the given repos (nil = every repo), summing the results.
+func (a *App) pushRepos(shorts []string, onlyRef string) (int, int, bool) {
+	if shorts == nil || len(shorts) == len(a.Repos) {
+		return a.push("", onlyRef)
+	}
+	p, f, busy := 0, 0, false
+	for _, s := range shorts {
+		pp, ff, bb := a.push(s, onlyRef)
+		p, f, busy = p+pp, f+ff, busy || bb
+	}
+	return p, f, busy
+}
+
 func (a *App) cmdPush(o *Opts) error {
-	if a.localOnly(o.str("repo")) {
-		a.noteLocalOnly(o, []string{o.str("repo")}, 0)
+	remote, local := a.splitLocal(a.shortsFor(o))
+	if len(remote) == 0 {
+		a.noteLocalOnly(o, local, 0)
 		return nil
 	}
-	if r, l := a.splitLocal(a.Shorts()); o.str("repo") == "" && len(r) == 0 {
-		a.noteLocalOnly(o, l, 0)
-		return nil
-	}
-	p, f, busy := a.push(o.str("repo"), "")
+	p, f, busy := a.pushRepos(remote, "")
 	s := ""
 	if busy {
 		s = " (another push is running)"
@@ -486,9 +499,9 @@ func (a *App) cmdPrune(o *Opts) error {
 }
 
 // doSync is push + incremental pull. Returns the exit code.
-func (a *App) doSync(shorts []string, quiet bool, out io.Writer, repo string) int {
+func (a *App) doSync(shorts []string, quiet bool, out io.Writer, pushOnly []string) int {
 	t0 := time.Now()
-	p, f, busy := a.push(repo, "")
+	p, f, busy := a.pushRepos(pushOnly, "")
 	rc := 0
 	if f > 0 {
 		rc = 1
@@ -524,7 +537,11 @@ func (a *App) cmdSync(o *Opts) error {
 	if len(remote) == 0 {
 		return nil
 	}
-	rc := a.doSync(remote, o.B["quiet"], a.Out, o.str("repo"))
+	var pushOnly []string // nil = everything queued; a scoped sync only sends its own repos' writes
+	if a.scoped() {
+		pushOnly = remote
+	}
+	rc := a.doSync(remote, o.B["quiet"], a.Out, pushOnly)
 	if o.B["quiet"] { // the marker belongs to the background sync that this process is
 		os.Remove(filepath.Join(a.Home, ".autosync"))
 	}

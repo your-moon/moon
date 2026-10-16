@@ -42,12 +42,15 @@ func Run(args []string, e issues.Env) int {
 	}
 	var cfg, dir, agent, colorMode string
 	noColor := false
+	var opt issues.ScopeOpts
 	for i := 0; i < len(args); i++ {
 		k, v, hv := strings.Cut(args[i], "=")
 		switch k {
 		case "--no-color", "-n":
 			noColor = true
-		case "--config", "--dir", "--agent", "--color":
+		case "--all":
+			opt.All = true
+		case "--config", "--dir", "--agent", "--color", "--repo", "-R":
 			if !hv {
 				if i+1 >= len(args) {
 					fmt.Fprintf(e.Err, "%s needs a value\n", k)
@@ -61,6 +64,8 @@ func Run(args []string, e issues.Env) int {
 				cfg = v
 			case "--dir":
 				dir = v
+			case "--repo", "-R":
+				opt.Flags = append(opt.Flags, v)
 			case "--color":
 				if v != "auto" && v != "always" && v != "never" {
 					fmt.Fprintf(e.Err, "--color wants auto, always or never, got %q\n", v)
@@ -71,7 +76,7 @@ func Run(args []string, e issues.Env) int {
 				agent = v
 			}
 		default:
-			fmt.Fprintf(e.Err, "usage: moon tui [--config FILE] [--dir MIRROR] [--agent NAME] [--color auto|always|never] [--no-color]\n")
+			fmt.Fprintf(e.Err, "usage: moon tui [--config FILE] [--dir MIRROR] [-R ALIAS | --all] [--agent NAME] [--color auto|always|never] [--no-color]\n")
 			return 2
 		}
 	}
@@ -93,12 +98,12 @@ func Run(args []string, e issues.Env) int {
 		lipgloss.SetColorProfile(termenv.ANSI)
 	}
 	var model tea.Model
-	if sess, err := issues.NewSession(cfg, dir, e); err != nil {
+	if sess, err := issues.NewSessionScoped(cfg, dir, e, opt); err != nil {
 		model = ErrorShell(err.Error())
 	} else {
 		SetPalette(sess.Palette())
 		model = NewShell([]Tab{
-			NewIssuesTab(sess, Options{Agent: agent, Editor: e.Getenv("EDITOR"), MirrorDir: sess.MirrorDir()}),
+			NewIssuesTab(sess, Options{Agent: agent, Editor: e.Getenv("EDITOR"), MirrorDir: sess.MirrorDir(), Scope: sess.Scope()}),
 			NewMilestonesTab(sess),
 			NewClaimsTab(sess),
 		}, 0)

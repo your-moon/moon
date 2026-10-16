@@ -67,6 +67,39 @@ Sorting: `--sort number|updated|created|title` (`-s`) and `-r` on `ls`, `frontie
 `due|progress|title|open`). Percentages round down, so 99.6% reads 99 and only a finished milestone shows 100.
 `--milestone` accepts a case-insensitive title or a unique prefix. A typo gets "did you mean ...".
 
+## Projects and scope
+
+Commands work on the project you are in. When you are not in one, they show every repo. The scope is decided once at
+startup, first match wins:
+
+1. `-R/--repo ALIAS` (repeatable) names the repos. `-R all` or `--all` forces every repo.
+2. A `moon.toml` (or `.moon/moon.toml`) in the current folder or a parent that declares exactly one repo.
+3. `paths` of a repo: folders that belong to it, for work that is not a git checkout. `~` is your home, a relative path is
+   relative to `moon.toml`, the longest matching path wins, and symlinks are resolved. Local-only repos are matched this way too.
+4. The git remote `origin` (`git remote get-url origin`, local only, 1 second at most), in ssh or https form, matched
+   case-insensitively as `owner/name` against every `github` value. The host and any credentials in the URL are ignored.
+5. Otherwise every configured repo.
+
+    [repos.app]
+    github = "octocat/app"
+    paths  = ["~/work/app", "/srv/app"]     # optional, one line
+
+`ls frontier prs milestones claims status sweep` default to the scope, as do `sync pull push prune` and the milestone commands
+(`milestones new|edit|close|reopen` need no `-R` inside a project). `show claim release comment
+close reopen label milestone edit` take a bare number (`585` or `#585`) for the scope's single repo; with several repos in
+scope the number must exist in exactly one (otherwise they exit 2 and list the candidates). `new` needs no `--repo` inside a
+project and refuses in all-repos mode, listing the aliases. Refs with an alias (`lib#3`) work everywhere, and `-R` always wins.
+
+On a terminal every list starts with a line on stderr, `scope: app (git remote origin)` or
+`scope: all repos (not inside a project)`, and lists over several repos get a REPO column. Piped and tab-separated output is
+unchanged byte for byte, with one intended difference: inside a project the default repo filter applies, so
+`moon issues ls | wc -l` counts that project only. Use `-R all` (or `--all`) to get every repo as before.
+
+`moon issues where` prints the resolved scope, the reason, the config file in use and what each rule found, to debug a
+scope that is not what you expected (the remote is shown as `owner/name` only). `moon tui` opens on the scoped repo, `a`
+toggles all repos, and the footer names the scope; it takes `-R` and `--all` too. Tab completion (shell and TUI) offers the scope's repo
+first: refs, labels and milestones come from it, a bare number completes when one repo is in scope, and `-R all`/`--all` widen it. The Milestones and Claims tabs still show every repo.
+
 ## Work status
 
 Every issue has a derived work status, shown in `ls`, `frontier`, `show`, `claims` and the TUI. Nothing is stored: it is
@@ -171,7 +204,7 @@ offered and nothing is printed. The scripts only call `moon __complete <words...
 
 ## Commands
 
-`ls show milestones (new edit close reopen show) prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune`,
+`ls show milestones (new edit close reopen show) prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune where`,
 `tui` (also `moon tui`, see Terminal UI), plus `moon version`. Run `moon issues help` for the flags. Run `moon tui` for the interactive dashboard. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
 mirror older than 10 minutes, `ISSUES_KEEP_DAYS` (default 30) is how long closed items keep their file, `ISSUES_GH` points at another `gh` binary.
 
@@ -223,7 +256,7 @@ reopen edit status`) works as for a GitHub repo, with the same on-disk layout.
     moon tui                 # dashboard: Issues, Milestones, Claims
     moon issues tui          # the same dashboard, opened on the Issues tab
 
-Flags: `--config FILE`, `--dir MIRROR`, `--agent NAME` (claim holder, default `$USER`), `--color auto|always|never`, `--no-color`. The config is found the same way as for
+Flags: `--config FILE`, `--dir MIRROR`, `-R ALIAS`, `--all`, `--agent NAME` (claim holder, default `$USER`), `--color auto|always|never`, `--no-color`. The config is found the same way as for
 `moon issues`; if none is found the screen lists the four places searched. It reads the local mirror only. Writes (`c u x m M`) are
 queued locally through the same code as the CLI, and the footer shows `queued: N ops` (operations, not issues: two ops on one issue read 2). There is no push, pull or sync in the UI: run
 `moon issues sync` yourself. `NO_COLOR` is respected (plain text, ASCII progress bars); colours come from the palette above. Mouse wheel scrolls, a click selects.
@@ -251,6 +284,7 @@ through the same write path as the CLI; errors show in the footer and `Up`/`Down
 | `l` | labels column: full, short, hidden (the footer shows the mode; default by width: full from 110, short from 70) |
 | `f` | filter menu: state, label, milestone, clear |
 | `tab` | next repo alias, when there are several |
+| `a` | all repos, or back to the project's repo |
 | `enter`, `esc` | open the detail full screen, go back |
 | `c`, `u` | claim, release; refused (never forced) when another agent holds it |
 | `x` | close or reopen (queued) |

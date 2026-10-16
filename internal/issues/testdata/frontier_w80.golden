@@ -1,7 +1,8 @@
-REF    STATE  STATUS  LABELS        TITLE
-app#9  open   open    feature       export: add CSV download
-app#8  open   open    cleanup,docs  docs: quickstart mentions a removed flag
-app#4  open   open    -             search: slow on big projects
-lib#3  open   open    bug           parser: crashes on empty input
+REF    REPO  STATE  STATUS  LABELS        TITLE
+app#9  app   open   open    feature       export: add CSV download
+app#8  app   open   open    cleanup,docs  docs: quickstart mentions a removed f…
+app#4  app   open   open    -             search: slow on big projects
+lib#3  lib   open   open    bug           parser: crashes on empty input
 --- stderr ---
+scope: all repos (not inside a project)
 showing 4 of 4

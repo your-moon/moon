@@ -17,5 +17,5 @@ func TestMilestoneWriteCommands(t *testing.T) {
 	want(t, "new -m", list(f.complete("issues", "new", "--repo", "erp", "--title", "t", "-m", "L")), "Local One")
 	want(t, "edit -d", list(f.complete("issues", "milestones", "edit", "x", "-d", "")), "none")
 	want(t, "new -d offers nothing", list(f.complete("issues", "milestones", "new", "x", "-d", "")), "")
-	want(t, "edit flags", list(f.complete("issues", "milestones", "edit", "x", "--")), "--repo --title --due --description --description-file --help --config --dir")
+	want(t, "edit flags", list(f.complete("issues", "milestones", "edit", "x", "--")), "--repo --title --due --description --description-file --all --help --config --dir")
 }

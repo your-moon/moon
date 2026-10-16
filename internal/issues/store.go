@@ -38,6 +38,12 @@ type App struct {
 	// SpawnSync starts the detached background sync. Tests replace it.
 	SpawnSync func(a *App) error
 	Repos     []Repo
+	// Project scope (scope.go): resolved once in Main. Zero Scope.Kind means "not resolved": every repo.
+	Scope        Scope
+	Cfg          *Config
+	Cwd          string
+	ConfigSource string
+	GitRemote    GitRemoteFunc
 	// TTY: Out is a terminal; Width its columns; Color: ANSI colours allowed. All false/0 in tests and pipes.
 	TTY   bool
 	Width int

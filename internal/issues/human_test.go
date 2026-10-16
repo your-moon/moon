@@ -91,7 +91,7 @@ func TestAutoPicksTableOnTTY(t *testing.T) {
 	if code != 0 || !strings.HasPrefix(out, "\x1b[1mREF") {
 		t.Fatalf("tty ls should be a coloured table: %d %q", code, out)
 	}
-	if errs != "showing 4 of 4\n" {
+	if errs != "\x1b[90mscope: app (-R app)\x1b[0m\nshowing 4 of 4\n" {
 		t.Errorf("footer: %q", errs)
 	}
 	tsv, _, _ := e.run("ls", "--repo", "app", "--format", "tsv")
@@ -216,11 +216,11 @@ func TestDefaultLimitOnTTY(t *testing.T) {
 	}
 	e.tty, e.width = true, 100
 	out, errs, _ := e.run("ls", "--repo", "app", "--no-color")
-	if n := len(refsOf(out)) - 1; n != 30 || errs != "showing 30 of 40 (use --limit 0 for all)\n" {
+	if n := len(refsOf(out)) - 1; n != 30 || errs != "scope: app (-R app)\nshowing 30 of 40 (use --limit 0 for all)\n" {
 		t.Errorf("tty default: %d rows, footer %q", n, errs)
 	}
 	out, errs, _ = e.run("ls", "--repo", "app", "--no-color", "--limit", "0")
-	if n := len(refsOf(out)) - 1; n != 40 || errs != "showing 40 of 40\n" {
+	if n := len(refsOf(out)) - 1; n != 40 || errs != "scope: app (-R app)\nshowing 40 of 40\n" {
 		t.Errorf("--limit 0: %d rows, footer %q", n, errs)
 	}
 	if out, _, _ = e.run("ls", "--repo", "app", "--format", "tsv"); len(refsOf(out)) != 40 {
@@ -398,7 +398,7 @@ func TestFriendlyErrors(t *testing.T) {
 	e2 := newEnv(t)
 	e2.tty, e2.width = true, 100
 	out, errs, code = e2.run("ls")
-	if code != 0 || out != "" || errs != "no mirror yet for app, lib; run moon issues pull\n" {
+	if code != 0 || out != "" || errs != "\x1b[90mscope: all repos (not inside a project)\x1b[0m\nno mirror yet for app, lib; run moon issues pull\n" {
 		t.Errorf("tty no mirror: %d %q %q", code, out, errs)
 	}
 	_, errs, code = e2.run("show", "app#1")
@@ -605,7 +605,7 @@ func TestMilestonesShow(t *testing.T) {
 	e.tty, e.width, e.extra["NO_COLOR"] = true, 80, "1"
 	out, errs, code = e.run("milestones", "show", "v1.0")
 	if code != 0 || !strings.HasPrefix(out, "v1.0  open  (app)\n") || !strings.Contains(out, "3/7 closed · 42% · 4 open · due 2026-04-01") ||
-		!strings.Contains(out, "REF     STATE  STATUS") || !strings.Contains(out, "app#8") || errs != "showing 2 of 2\n" {
+		!strings.Contains(out, "REF     REPO  STATE  STATUS") || !strings.Contains(out, "app#8") || errs != "scope: all repos (not inside a project)\nshowing 2 of 2\n" {
 		t.Errorf("tty show: %d\n%s\n%q", code, out, errs)
 	}
 	if _, errs, code = e.run("milestones", "show", "v9"); code != 2 || !strings.Contains(errs, "no milestone 'v9'") {
