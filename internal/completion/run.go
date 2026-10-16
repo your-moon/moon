@@ -45,7 +45,7 @@ func RunComplete(o Options, args []string, out io.Writer) int {
 	for _, c := range res.Cands {
 		b.WriteString(oneLineTab(c.Value))
 		if c.Desc != "" {
-			b.WriteString("\t" + oneLineTab(c.Desc))
+			b.WriteString("\t" + shorten(oneLineTab(c.Desc), 72))
 		}
 		b.WriteString("\n")
 	}
@@ -150,4 +150,12 @@ func escapeFor(s string, quote byte) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// shorten cuts a description to n runes so one candidate stays on one line of the shell's list.
+func shorten(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
 }
