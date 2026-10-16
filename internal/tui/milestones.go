@@ -58,7 +58,7 @@ func bar(closed, total, w int, ascii bool) string {
 type msRow struct {
 	alias, title string
 	closed, open int
-	due          string
+	due, desc    string
 	none         bool // the (no milestone) row
 }
 
@@ -106,7 +106,7 @@ func (t *milestonesTab) load() {
 	t.rows = t.rows[:0:0]
 	have := map[string]bool{}
 	for _, r := range t.st.Milestones() {
-		t.rows = append(t.rows, msRow{alias: r.Alias, title: r.Title, closed: r.Closed, open: r.Open, due: r.Due})
+		t.rows = append(t.rows, msRow{alias: r.Alias, title: r.Title, closed: r.Closed, open: r.Open, due: r.Due, desc: r.Description})
 		have[r.Alias] = true
 	}
 	snap := t.st.Load()
@@ -312,7 +312,11 @@ func (t *milestonesTab) View() string {
 	if t.hideDone {
 		hide = "  fully closed hidden"
 	}
-	lines = append(lines, stDim.Render(fit(t.Keys(), t.w)), fit(fmt.Sprintf("%d shown of %d  sort:%s%s", len(t.view), len(t.rows), msSortNames[t.sortBy], hide), t.w))
+	status := fmt.Sprintf("%d shown of %d  sort:%s%s", len(t.view), len(t.rows), msSortNames[t.sortBy], hide)
+	if d := t.detail(); d != "" { // the selected milestone's due date and description
+		status = d + "  |  " + status
+	}
+	lines = append(lines, stDim.Render(fit(t.Keys(), t.w)), fit(status, t.w))
 	for i, l := range lines {
 		if lipgloss.Width(l) > t.w {
 			l = ansi.Truncate(l, t.w, "")
@@ -320,4 +324,24 @@ func (t *milestonesTab) View() string {
 		lines[i] = strings.TrimRight(l, " ")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// detail is the selected row's description, led by "due 2026-04-01" when the DUE column is hidden (narrow
+// screens). Empty without a description, so such milestones look as before.
+func (t *milestonesTab) detail() string {
+	if t.cur < 0 || t.cur >= len(t.view) {
+		return ""
+	}
+	r := t.view[t.cur]
+	if r.desc == "" {
+		return ""
+	}
+	var parts []string
+	if len(r.due) >= 10 && t.w < 70 {
+		parts = append(parts, "due "+r.due[:10])
+	}
+	if r.desc != "" {
+		parts = append(parts, oneLine(r.desc))
+	}
+	return strings.Join(parts, ": ")
 }

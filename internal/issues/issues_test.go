@@ -376,7 +376,7 @@ func TestPullWithFakeGitHub(t *testing.T) {
 				"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{pr}}}}}), nil
 		}
 		return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{
-			"milestones": map[string]any{"nodes": []any{map[string]any{"title": "v1", "state": "OPEN", "dueOn": nil, "closed": map[string]any{"totalCount": 1}, "open": map[string]any{"totalCount": 2}}}},
+			"milestones": map[string]any{"nodes": []any{map[string]any{"number": 3, "title": "v1", "state": "OPEN", "dueOn": "2026-04-01T00:00:00Z", "description": "first\tline\nsecond", "updatedAt": "2026-02-01T00:00:00Z"}}},
 			"issues":     map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{issue}}}}}), nil
 	}
 	e.now = time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)
@@ -387,7 +387,7 @@ func TestPullWithFakeGitHub(t *testing.T) {
 	}
 	eq(t, "index", e.read("app/index.tsv"), "5\tclosed\tv1\tbug\t2026-02-02T00:00:00Z\tt\n")
 	eq(t, "cursor", e.read("app/cursor"), "2026-02-02T00:00:00Z\n")
-	eq(t, "milestones", e.read("app/milestones.tsv"), "v1\topen\t1\t2\t\n")
+	eq(t, "milestones", e.read("app/milestones.tsv"), "3\t\tv1\topen\t2026-04-01\tfirst\\tline\\nsecond\t2026-02-01T00:00:00Z\n")
 	eq(t, "prs", e.read("app/prs.tsv"), "6\topen\t1\th\to\tmain\t2026-02-01T00:00:00Z\t\t\tghost\t2026-02-03T00:00:00Z\t5\tp\n")
 	out, _, _ = e.run("pull", "--repo", "app")
 	eq(t, "idempotent pull", out, "PULL app=0\n")

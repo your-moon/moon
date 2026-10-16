@@ -30,6 +30,16 @@ func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, erro
 	return h(args, stdin)
 }
 
+func (f *fakeGH) ListMilestones(repo string) ([]RemoteMilestone, error) {
+	return ghListMilestones(f.Run, repo)
+}
+func (f *fakeGH) CreateMilestone(repo string, m RemoteMilestone) (RemoteMilestone, error) {
+	return ghCreateMilestone(f.Run, repo, m)
+}
+func (f *fakeGH) UpdateMilestone(repo string, n int, ch MilestoneChange) error {
+	return ghUpdateMilestone(f.Run, repo, n, ch)
+}
+
 func (f *fakeGH) count(prefix ...string) int {
 	n := 0
 	for _, c := range f.calls {

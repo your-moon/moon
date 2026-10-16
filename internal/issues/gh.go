@@ -14,6 +14,10 @@ import (
 type GitHub interface {
 	// Run executes `gh <args>` with stdin and returns stdout.
 	Run(args []string, stdin string, timeout time.Duration) (string, error)
+	// ListMilestones, CreateMilestone and UpdateMilestone wrap `gh api repos/{owner}/{repo}/milestones`.
+	ListMilestones(repo string) ([]RemoteMilestone, error)
+	CreateMilestone(repo string, m RemoteMilestone) (RemoteMilestone, error)
+	UpdateMilestone(repo string, number int, ch MilestoneChange) error
 }
 
 // GhError is a failed gh call.
