@@ -232,7 +232,7 @@ func (a *App) cmdShow(o *Opts) error {
 	}
 	v := a.resolveView(o, false)
 	if v.format == "json" {
-		return die("show has no json format; read the file under %s/%s/ or use `moon issues prs --json` for pull requests", a.Home, short)
+		return a.showJSON(ref, short, ident)
 	}
 	pretty := v.format == "table"
 	ops := a.loadOutbox()

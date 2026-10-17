@@ -39,6 +39,7 @@ tab-separated text as always, so scripts and agents are unaffected. `--format ta
     moon issues ls 10                            # same limit, shortest form
     moon issues frontier -L kind:bug             # open issues nobody has claimed
     moon issues show app#12                      # one issue, body wrapped to the terminal
+    moon issues show app#12 --format json        # one issue as JSON: ls fields plus body, assignees, author, url, claim
     moon issues milestones                       # progress of the open milestones
     moon issues milestones show v1.0             # one milestone and its issues
     moon issues prs -S all                       # pull requests

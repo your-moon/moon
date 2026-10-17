@@ -248,9 +248,7 @@ func TestJSONFormat(t *testing.T) {
 	if out, _, _ = e.run("status", "--format", "json"); !strings.HasPrefix(out, `{"outbox": 0, "errors": 0`) {
 		t.Errorf("status json: %q", out)
 	}
-	if _, errs, code := e.run("show", "app#12", "--format", "json"); code != 2 || !strings.Contains(errs, "no json") {
-		t.Errorf("show json: %d %q", code, errs)
-	}
+	// show --format json is covered by show_json_test.go
 }
 
 func TestShowPretty(t *testing.T) {
