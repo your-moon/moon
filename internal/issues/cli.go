@@ -37,6 +37,9 @@ func repoFl() fl    { return fl{name: "repo", kind: 's'} }
 func freshFl() fl   { return fl{name: "fresh", kind: 'b'} }
 func bodyFls() []fl { return []fl{{name: "body", kind: 's'}, {name: "body-file", kind: 's'}} }
 
+// emptyBodyFl lets new and edit accept a blank body on purpose; see readBodyGuarded.
+func emptyBodyFl() fl { return fl{name: "allow-empty-body", kind: 'b'} }
+
 // fmtFls: how a human wants the output. sortFls: ordering and size, for the long lists.
 func fmtFls() []fl {
 	return []fl{{name: "format", kind: 's', choices: []string{"auto", "table", "tsv", "json"}, def: "auto"}, {name: "no-color", kind: 'b'},
@@ -90,7 +93,7 @@ func commands() map[string]*spec {
 		"sweep":   {fls: one(freshFl(), fl{name: "release", kind: 'b'}, fl{name: "live", kind: 'b'}, fl{name: "agent", kind: 's'}).with(fmtFls()), read: true, run: (*App).cmdSweep},
 		"status":  {fls: fmtFls(), run: (*App).cmdStatus},
 		"new": {fls: cat(one(repoFl(), fl{name: "title", kind: 's', req: true}, fl{name: "label", kind: 'a'},
-			fl{name: "milestone", kind: 's'}, fl{name: "now", kind: 'b'}), bodyFls()), run: (*App).cmdNew},
+			fl{name: "milestone", kind: 's'}, fl{name: "now", kind: 'b'}, emptyBodyFl()), bodyFls()), run: (*App).cmdNew},
 		"comment": {fls: bodyFls(), npos: 1, run: func(a *App, o *Opts) error { return a.cmdSimple("comment")(o) }},
 		"close": {fls: one(fl{name: "reason", kind: 's', choices: []string{"completed", "not_planned"}, def: "completed"},
 			fl{name: "comment", kind: 's'}, fl{name: "agent", kind: 's'}), npos: 1, run: func(a *App, o *Opts) error { return a.cmdSimple("close")(o) }},
@@ -98,7 +101,7 @@ func commands() map[string]*spec {
 		"label": {fls: one(fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}), npos: 1,
 			run: func(a *App, o *Opts) error { return a.cmdSimple("label")(o) }},
 		"milestone": {npos: 2, run: func(a *App, o *Opts) error { return a.cmdSimple("milestone")(o) }},
-		"edit": {fls: cat(one(fl{name: "title", kind: 's'}), bodyFls()), npos: 1,
+		"edit": {fls: cat(one(fl{name: "title", kind: 's'}, emptyBodyFl()), bodyFls()), npos: 1,
 			run: func(a *App, o *Opts) error { return a.cmdSimple("edit")(o) }},
 		"push":  {fls: one(repoFl()), run: (*App).cmdPush},
 		"pull":  {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
@@ -131,7 +134,7 @@ commands:
   claim <ref> --agent NAME [--ttl 120m] [--pid N]    (exit 3 = held by someone else)
   release <ref> (--agent NAME | --force)             claims    status
   sweep [--release]              list (or release) claims that are stale or on closed issues
-  new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--now]
+  new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--now] [--allow-empty-body]
   comment|close|reopen|label|milestone|edit <ref> ...
   push [--repo R]   pull [--repo R] [--full]   sync [--repo R] [--quiet]   prune [--repo R]
   where                          which repos commands default to here, and why
