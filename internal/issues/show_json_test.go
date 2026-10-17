@@ -36,7 +36,7 @@ func TestShowJSONFields(t *testing.T) {
 		"ref": "app#7", "number": 7.0, "state": "open", "status": "open", "milestone": nil,
 		"labels": []any{"bug", "area::ui"}, "title": "widget: renders \"blank\" ünïcode\ttab", "updated_at": "2026-02-01T00:00:00Z",
 		"body": "line one\nline two", "assignees": []any{}, "author": "ghost", "created_at": "2026-01-01T00:00:00Z",
-		"url": "https://github.com/example/app/issues/7", "claim": nil, "pending": 0.0, "status_detail": "open",
+		"url": "https://github.com/example/app/issues/7", "claim": nil, "pending": 0.0, "status_detail": "open", "depends_on": []any{},
 	}
 	if !reflect.DeepEqual(m, want) {
 		t.Fatalf("got  %v\nwant %v", m, want)

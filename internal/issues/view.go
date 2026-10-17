@@ -126,7 +126,7 @@ func (a *App) listRows(o *Opts, rows []row) error {
 		l := []any{}
 		for _, r := range rows {
 			l = append(l, Obj{{"ref", r.ref}, {"state", r.state}, {"status", r.work.Name}, {"status_detail", r.work.Label()}, {"milestone", nilIfEmpty(r.milestone)}, {"labels", splitNonEmpty(r.labels)},
-				{"title", r.title}, {"updated_at", r.updated}})
+				{"title", r.title}, {"updated_at", r.updated}, {"depends_on", nonNilInts(r.deps)}})
 		}
 		a.println(dumps(l, false))
 	case "table":

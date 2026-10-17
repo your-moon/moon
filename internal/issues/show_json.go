@@ -87,7 +87,7 @@ func (a *App) showJSON(ref, short, ident string) error {
 	if aerr == nil {
 		number = num
 	}
-	ws := a.newWorkEnv().status(ref, short, num, e.state, e.labels)
+	ws := a.newWorkEnv().statusBody(ref, short, num, e.state, e.labels, e.body)
 	author := ""
 	if n.Author != nil {
 		author = n.Author.Login
@@ -95,7 +95,7 @@ func (a *App) showJSON(ref, short, ident string) error {
 	a.println(dumps(Obj{{"ref", ref}, {"number", number}, {"state", e.state}, {"status", ws.Name}, {"status_detail", ws.Label()},
 		{"milestone", nilIfEmpty(e.milestone)}, {"labels", nonNil(e.labels)}, {"title", e.title}, {"updated_at", n.UpdatedAt},
 		{"body", e.body}, {"assignees", assignees}, {"author", nilIfEmpty(author)}, {"created_at", nilIfEmpty(n.CreatedAt)},
-		{"url", nilIfEmpty(n.URL)}, {"claim", a.claimJSON(ref)}, {"pending", len(pending)}}, false))
+		{"url", nilIfEmpty(n.URL)}, {"claim", a.claimJSON(ref)}, {"pending", len(pending)}, {"depends_on", nonNilInts(dependsOn(e.body))}}, false))
 	return nil
 }
 
@@ -107,6 +107,13 @@ func (a *App) claimJSON(ref string) any {
 	}
 	return Obj{{"agent", c.Agent}, {"host", c.Host}, {"pid", c.Pid}, {"age_seconds", int(a.nowEpoch() - c.TS)},
 		{"ttl_seconds", int(c.TTL)}, {"stale", st == "stale"}}
+}
+
+func nonNilInts(l []int) []int {
+	if l == nil {
+		return []int{}
+	}
+	return l
 }
 
 func nonNil(l []string) []string {

@@ -79,6 +79,14 @@ queued in GitHub's spelling. moon never creates labels: add it on GitHub and `mo
 was never pulled, a local-only repo, or when `labels.tsv` holds 100 labels (`pull` fetches no more, so it may be cut off).
 `--remove` is not checked.
 
+Dependencies: `new|edit --depends-on REF` (repeatable; `#3`, `3` or `app#3`, same repo only; `edit ... --depends-on none` clears)
+writes one `Depends on #3, #5` line into the body, so it reads the same on GitHub and survives a pull. `edit` rewrites the
+body around that line, so an edit queued from a stale mirror overwrites newer text on GitHub, as `--body` does. `ls` and `show`
+`--format json` print `depends_on` (every number on the line). An open issue with an open dependency has status `blocked` (shown as
+`blocked: by #3`); a claim still wins (`working`), and the `blocked` labels keep working. A dependency counts as open from the mirror
+after queued `close` and `reopen`, so closing it unblocks its dependents at once. A number the mirror does not list is ignored.
+Only a line made of nothing but refs counts: `Depends on the auth service (#4)` is prose. Cycles are not detected.
+
 ## Fixing a write that sync cannot send
 
 A queued write that fails stays in the outbox and is retried by every `sync`. `moon issues outbox` is how to look at it and repair it:

@@ -235,7 +235,7 @@ func TestJSONFormat(t *testing.T) {
 	e := newEnv(t)
 	humanFixture(e)
 	out, _, code := e.run("ls", "--repo", "lib", "--format", "json")
-	eq(t, "ls json", out, `[{"ref": "lib#3", "state": "open", "status": "open", "status_detail": "open", "milestone": null, "labels": ["kind:bug"], "title": "parser: crashes on empty input", "updated_at": "2026-02-12T09:00:00Z"}]`+"\n")
+	eq(t, "ls json", out, `[{"ref": "lib#3", "state": "open", "status": "open", "status_detail": "open", "milestone": null, "labels": ["kind:bug"], "title": "parser: crashes on empty input", "updated_at": "2026-02-12T09:00:00Z", "depends_on": []}]`+"\n")
 	if code != 0 {
 		t.Fatal(code)
 	}

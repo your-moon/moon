@@ -41,7 +41,7 @@ var posKinds = map[string][]string{
 }
 
 var valueKinds = map[string]string{"repo": "repo", "label": "label", "add": "label", "remove": "label", "milestone": "milestone",
-	"body-file": "file", "limit": "number", "status": "status", "due": "date", "description-file": "file"}
+	"body-file": "file", "depends-on": "ref", "limit": "number", "status": "status", "due": "date", "description-file": "file"}
 
 // GlobalFlags are the options `moon issues` takes before the command.
 func GlobalFlags() []FlagInfo {

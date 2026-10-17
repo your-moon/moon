@@ -296,6 +296,13 @@ func (a *App) cmdNew(o *Opts) error {
 	if labels, err = a.checkLabels(repo, labels); err != nil {
 		return err
 	}
+	if o.Seen["depends-on"] {
+		nums, err := a.depNumbers(repo, o.L["depends-on"], 0)
+		if err != nil {
+			return err
+		}
+		body = withDepends(body, nums)
+	}
 	if a.localOnly(repo) {
 		n, err := a.newLocalOnly(repo, o.str("title"), body, labels, o.str("milestone"))
 		if err != nil {
@@ -406,11 +413,16 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			if err != nil {
 				return err
 			}
+			if o.Seen["depends-on"] {
+				if b, has, err = a.editDepends(o.Pos[0], b, has, o.L["depends-on"]); err != nil {
+					return err
+				}
+			}
 			if has {
 				args["body"] = b
 			}
 			if len(args) == 0 {
-				return die("edit needs --title and/or --body")
+				return die("edit needs --title, --body and/or --depends-on")
 			}
 		}
 		var opID, ref string

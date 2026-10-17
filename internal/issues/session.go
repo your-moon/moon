@@ -224,7 +224,7 @@ func (s *Session) load(withCreated bool) Snapshot {
 			applyOps(e, rest)
 			it := Item{Ref: op.Ref, Alias: short, State: e.state, Milestone: e.milestone, Labels: e.labels, Updated: op.TS, Created: op.TS,
 				Title: e.title, Pending: len(byRef[op.Ref])}
-			it.Work = we.status(op.Ref, short, 0, e.state, e.labels)
+			it.Work = we.statusBody(op.Ref, short, 0, e.state, e.labels, argStr(t, "body"))
 			if c := claims[op.Ref]; c != nil {
 				it.Claim = s.claimInfo(c)
 			}
