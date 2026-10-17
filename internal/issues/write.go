@@ -286,7 +286,7 @@ func (a *App) cmdNew(o *Opts) error {
 	if err := a.expandMsRef(o); err != nil {
 		return err
 	}
-	body, _, err := a.readBody(o)
+	body, _, err := a.readBodyGuarded(o, "new", true)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			if err != nil {
 				return err
 			}
-			if b == "" {
+			if pyStrip(b) == "" {
 				return die("comment needs --body or --body-file")
 			}
 			args["body"] = b
@@ -394,7 +394,7 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			if o.Seen["title"] {
 				args["title"] = o.str("title")
 			}
-			b, has, err := a.readBody(o)
+			b, has, err := a.readBodyGuarded(o, "edit", false)
 			if err != nil {
 				return err
 			}

@@ -69,6 +69,10 @@ Sorting: `--sort number|updated|created|title` (`-s`) and `-r` on `ls`, `frontie
 `due|progress|title|open`). Percentages round down, so 99.6% reads 99 and only a finished milestone shows 100.
 `--milestone` accepts a case-insensitive title or a unique prefix. A typo gets "did you mean ...".
 
+An empty body is refused where it would do harm: `edit --body-file F` (or `--body ""`) with a blank body, `new --body-file F` with
+a blank file, and `comment` with a blank body exit 2 and queue nothing, because an empty input almost always means the script
+that wrote it failed (an empty `edit` erases the issue body on GitHub). `--allow-empty-body` on `new` and `edit` says it is meant.
+
 ## Projects and scope
 
 Commands work on the project you are in. When you are not in one, they show every repo. The scope is decided once at
