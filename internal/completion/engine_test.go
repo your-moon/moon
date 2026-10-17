@@ -279,3 +279,11 @@ func TestShortLabelCompletesAndFindsTheSameIssues(t *testing.T) {
 		t.Errorf("-L auth vs -L area::auth:\n%q\n%q", a, b)
 	}
 }
+
+func TestOutboxCompletion(t *testing.T) {
+	f := newFixture(t, standard)
+	want(t, "outbox subcommands", list(f.complete("issues", "outbox", "")), "ls edit drop")
+	want(t, "outbox edit flags", list(f.complete("issues", "outbox", "edit", "abcd", "--cas")), "")
+	want(t, "outbox drop flag", list(f.complete("issues", "outbox", "drop", "abcd", "--cas")), "--cascade")
+	want(t, "outbox ls format", list(f.complete("issues", "outbox", "ls", "--format", "j")), "json")
+}

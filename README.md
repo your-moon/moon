@@ -79,6 +79,23 @@ queued in GitHub's spelling. moon never creates labels: add it on GitHub and `mo
 was never pulled, a local-only repo, or when `labels.tsv` holds 100 labels (`pull` fetches no more, so it may be cut off).
 `--remove` is not checked.
 
+## Fixing a write that sync cannot send
+
+A queued write that fails stays in the outbox and is retried by every `sync`. `moon issues outbox` is how to look at it and repair it:
+
+    moon issues outbox                              # = outbox ls: id, op, ref, tries, what it does, last error (-j adds the args)
+    moon issues outbox edit 3f9a21c0 --label bug --label area::web   # a queued new: replace its labels
+    moon issues outbox edit 3f9a21c0 --title T --body-file fixed.md  # title and body (a new keeps its local-id marker)
+    moon issues outbox edit 5be7d210 --add bug --remove stale        # a queued label write
+    moon issues outbox drop 3f9a21c0                # remove a queued write
+    moon issues outbox drop 3f9a21c0 --cascade      # a queued new that other writes act on: drop those too
+
+`<op>` is the op id from `outbox ls` or any piece of it that only one op has (at least 4 characters; the table shows the last 8).
+`edit` changes `new` (title, body, `--label` replaces the list, `--milestone`), `edit` (title, body), `comment` (body), `label`
+(`--add`, `--remove`) and `milestone` writes; the fields are checked like the original command (unknown labels and blank bodies are
+refused), and the old error is cleared so the next `sync` shows whether the fix worked. Both `edit` and `drop` refuse while a push is
+running. Dropping a queued `new` that other writes act on needs `--cascade`, because they could never be sent without it.
+
 ## Projects and scope
 
 Commands work on the project you are in. When you are not in one, they show every repo. The scope is decided once at
@@ -217,7 +234,7 @@ offered and nothing is printed. The scripts only call `moon __complete <words...
 
 ## Commands
 
-`ls show milestones (new edit close reopen show) prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune where`,
+`ls show milestones (new edit close reopen show) prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit outbox (ls edit drop) push pull sync prune where`,
 `tui` (also `moon tui`, see Terminal UI), plus `moon version`. Run `moon issues help` for the flags. Run `moon tui` for the interactive dashboard. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
 mirror older than 10 minutes, `ISSUES_KEEP_DAYS` (default 30) is how long closed items keep their file, `ISSUES_GH` points at another `gh` binary.
 
