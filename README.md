@@ -73,6 +73,12 @@ An empty body is refused where it would do harm: `edit --body-file F` (or `--bod
 a blank file, and `comment` with a blank body exit 2 and queue nothing, because an empty input almost always means the script
 that wrote it failed (an empty `edit` erases the issue body on GitHub). `--allow-empty-body` on `new` and `edit` says it is meant.
 
+`new -L` and `label --add` check each label against the repo's mirrored `labels.tsv` and refuse one GitHub does not have (exit 2,
+nothing queued, close matches listed), so a typo does not leave a write stuck in the outbox. A label that differs only in case is
+queued in GitHub's spelling. moon never creates labels: add it on GitHub and `moon issues pull`. Nothing is checked for a repo that
+was never pulled, a local-only repo, or when `labels.tsv` holds 100 labels (`pull` fetches no more, so it may be cut off).
+`--remove` is not checked.
+
 ## Projects and scope
 
 Commands work on the project you are in. When you are not in one, they show every repo. The scope is decided once at
