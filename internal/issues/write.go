@@ -298,6 +298,9 @@ func (a *App) cmdNew(o *Opts) error {
 	if labels == nil {
 		labels = []string{}
 	}
+	if labels, err = a.checkLabels(repo, labels); err != nil {
+		return err
+	}
 	if a.localOnly(repo) {
 		n, err := a.newLocalOnly(repo, o.str("title"), body, labels, o.str("milestone"))
 		if err != nil {
@@ -354,6 +357,22 @@ func toAny(l []string) []any {
 	return out
 }
 
+// labelArgs is the op args of `label`: the labels to add (checked against the repo's labels) and to remove.
+func (a *App) labelArgs(o *Opts) (map[string]any, error) {
+	add, rm := o.L["add"], o.L["remove"]
+	if len(add)+len(rm) == 0 {
+		return nil, die("label needs --add and/or --remove")
+	}
+	short, _, err := a.parseRef(o.Pos[0])
+	if err != nil {
+		return nil, err
+	}
+	if add, err = a.checkLabels(short, add); err != nil {
+		return nil, err
+	}
+	return map[string]any{"add": toAny(add), "remove": toAny(rm)}, nil
+}
+
 func (a *App) cmdSimple(kind string) func(o *Opts) error {
 	return func(o *Opts) error {
 		args := map[string]any{}
@@ -373,17 +392,11 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 				args["comment"] = c
 			}
 		case "label":
-			add, rm := o.L["add"], o.L["remove"]
-			if len(add)+len(rm) == 0 {
-				return die("label needs --add and/or --remove")
+			la, err := a.labelArgs(o)
+			if err != nil {
+				return err
 			}
-			args["add"], args["remove"] = toAny(add), toAny(rm)
-			if add == nil {
-				args["add"] = []any{}
-			}
-			if rm == nil {
-				args["remove"] = []any{}
-			}
+			args = la
 		case "milestone":
 			t, err := a.msIssueTitle(o.Pos[0], o.Pos[1])
 			if err != nil {
