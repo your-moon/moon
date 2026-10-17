@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -215,15 +214,11 @@ func (a *App) rewriteRefs(old, new string) {
 
 // push applies the outbox files in order, one attempt per op per run. Returns (pushed, failed, busy).
 func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
-	os.MkdirAll(a.Home, 0o755)
-	f, err := os.OpenFile(filepath.Join(a.Home, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
+	f, ok := a.tryPushLock()
+	if !ok {
 		return 0, 0, true
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil { // M_pushlock
-		return 0, 0, true
-	}
 	pushed, failed := 0, 0
 	badRefs, tried := map[string]bool{}, map[string]bool{}
 	for {

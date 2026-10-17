@@ -103,11 +103,15 @@ func commands() map[string]*spec {
 		"milestone": {npos: 2, run: func(a *App, o *Opts) error { return a.cmdSimple("milestone")(o) }},
 		"edit": {fls: cat(one(fl{name: "title", kind: 's'}, emptyBodyFl()), bodyFls()), npos: 1,
 			run: func(a *App, o *Opts) error { return a.cmdSimple("edit")(o) }},
-		"push":  {fls: one(repoFl()), run: (*App).cmdPush},
-		"pull":  {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
-		"prune": {fls: one(repoFl()), run: (*App).cmdPrune},
-		"sync":  {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
-		"where": {run: (*App).cmdWhere},
+		"push":        {fls: one(repoFl()), run: (*App).cmdPush},
+		"pull":        {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
+		"prune":       {fls: one(repoFl()), run: (*App).cmdPrune},
+		"sync":        {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
+		"where":       {run: (*App).cmdWhere},
+		"outbox ls":   {fls: fmtFls(), run: (*App).cmdOutboxLs},
+		"outbox drop": {fls: one(fl{name: "cascade", kind: 'b'}), npos: 1, run: (*App).cmdOutboxDrop},
+		"outbox edit": {fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "label", kind: 'a'}, fl{name: "milestone", kind: 's'},
+			fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}, emptyBodyFl()), bodyFls()), npos: 1, run: (*App).cmdOutboxEdit},
 	}
 	// every command can be pointed at repos with -R (repeatable) and widened with --all; see scope.go
 	for _, sp := range m {
@@ -138,6 +142,9 @@ commands:
   comment|close|reopen|label|milestone|edit <ref> ...
   push [--repo R]   pull [--repo R] [--full]   sync [--repo R] [--quiet]   prune [--repo R]
   where                          which repos commands default to here, and why
+  outbox [ls]                    list the queued writes (what sync will send), with their last error
+  outbox edit <op> [--title T] [--body B | --body-file F|-] [--label L ...] [--milestone M] [--add L ...] [--remove L ...]
+  outbox drop <op> [--cascade]   fix or remove a queued write that sync cannot send (<op> = a piece of the op id)
 
 Reading commands (ls frontier prs claims status milestones show) also take:
   --format auto|table|tsv|json   auto = table on a terminal, tab-separated when piped
@@ -414,6 +421,12 @@ func Main(args []string, e Env) int {
 		if name == "milestones" && len(rest) > 2 && isMsSub(rest[2]) {
 			name = "milestones " + rest[2]
 		}
+		if name == "outbox" {
+			name = "outbox ls"
+			if len(rest) > 2 && isOutboxSub(rest[2]) {
+				name = "outbox " + rest[2]
+			}
+		}
 		if _, ok := helpTexts[name]; !ok {
 			fmt.Fprint(e.Err, unknownCommand(rest[1]))
 			return 2
@@ -432,6 +445,18 @@ func Main(args []string, e Env) int {
 	rest = rest[1:]
 	if name == "milestones" && len(rest) > 0 && isMsSub(rest[0]) {
 		name, rest = "milestones "+rest[0], rest[1:]
+	}
+	if name == "outbox" {
+		sub := "ls" // bare `outbox`, or only flags, lists
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			sub = rest[0]
+			rest = rest[1:]
+		}
+		if !isOutboxSub(sub) {
+			fmt.Fprintf(e.Err, "moon issues outbox: unknown subcommand %q (ls, edit, drop)\n", sub)
+			return 2
+		}
+		name = "outbox " + sub
 	}
 	if name == "pr" {
 		if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {
@@ -627,6 +652,9 @@ func spawnSync(a *App) error {
 	}
 	return cmd.Process.Release()
 }
+
+// isOutboxSub: the words that follow `moon issues outbox`.
+func isOutboxSub(w string) bool { return w == "ls" || w == "edit" || w == "drop" }
 
 // isMsSub: the words that follow `moon issues milestones`.
 func isMsSub(w string) bool {
