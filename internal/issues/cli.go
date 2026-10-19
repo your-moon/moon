@@ -509,7 +509,7 @@ func Main(args []string, e Env) int {
 	host, _ := os.Hostname()
 	gh := e.GH
 	if gh == nil {
-		gh = ExecGH{Bin: e.Getenv("ISSUES_GH")}
+		gh = NewExecGH(e.Getenv("ISSUES_GH"))
 	}
 	git := e.GitRemote
 	if git == nil {

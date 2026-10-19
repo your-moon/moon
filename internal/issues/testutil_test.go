@@ -12,13 +12,20 @@ import (
 	"time"
 )
 
-// fakeGH is the GitHub interface for tests. Nothing here talks to a network.
+// fakeGH is the argv-level fake: a handler answers each gh command line. The typed GitHub methods come from cliGH over Run. Nothing here talks to a network.
 type fakeGH struct {
 	mu       sync.Mutex
 	hmu      sync.Mutex // serialises handler calls (they keep plain test state), unless parallel
 	parallel bool
 	calls    [][]string
 	handler  func(args []string, stdin string) (string, error)
+	cliGH    // the typed GitHub, spoken through Run: the shim that keeps argv-parsing handlers working
+}
+
+func newFakeGH() *fakeGH {
+	f := &fakeGH{}
+	f.cliGH = cliGH{run: f.Run}
+	return f
 }
 
 func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, error) {
@@ -34,16 +41,6 @@ func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, erro
 		defer f.hmu.Unlock()
 	}
 	return h(args, stdin)
-}
-
-func (f *fakeGH) ListMilestones(repo string) ([]RemoteMilestone, error) {
-	return ghListMilestones(f.Run, repo)
-}
-func (f *fakeGH) CreateMilestone(repo string, m RemoteMilestone) (RemoteMilestone, error) {
-	return ghCreateMilestone(f.Run, repo, m)
-}
-func (f *fakeGH) UpdateMilestone(repo string, n int, ch MilestoneChange) error {
-	return ghUpdateMilestone(f.Run, repo, n, ch)
 }
 
 func (f *fakeGH) callCount() int {
@@ -95,7 +92,7 @@ func newEnv(t *testing.T) *env {
 	d := t.TempDir()
 	cfg := filepath.Join(d, "moon.toml")
 	os.WriteFile(cfg, []byte("mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\ngithub = \"example/lib\"\n"), 0o644)
-	return &env{t: t, home: filepath.Join(d, "mirror"), cfg: cfg, gh: &fakeGH{}, now: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
+	return &env{t: t, home: filepath.Join(d, "mirror"), cfg: cfg, gh: newFakeGH(), now: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
 		extra: map[string]string{"ISSUES_NO_AUTOSYNC": "1"}}
 }
 

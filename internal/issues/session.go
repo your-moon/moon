@@ -96,7 +96,7 @@ func NewSessionScoped(cfgPath, dir string, e Env, opt ScopeOpts) (*Session, erro
 	if now == nil {
 		now = time.Now
 	}
-	a := &App{Home: home, GH: ExecGH{}, Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
+	a := &App{Home: home, GH: NewExecGH(""), Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
 		Environ: e.Getenv, Repos: cfg.Repos, SpawnSync: spawnSync}
 	git := e.GitRemote
 	if git == nil {

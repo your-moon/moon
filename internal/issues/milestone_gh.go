@@ -111,13 +111,3 @@ func ghUpdateMilestone(run ghRun, repo string, number int, ch MilestoneChange) e
 	_, err := run([]string{"api", "-X", "PATCH", fmt.Sprintf("repos/%s/milestones/%d", repo, number), "--input", "-"}, string(b), 90*time.Second)
 	return err
 }
-
-func (g ExecGH) ListMilestones(repo string) ([]RemoteMilestone, error) {
-	return ghListMilestones(g.Run, repo)
-}
-func (g ExecGH) CreateMilestone(repo string, m RemoteMilestone) (RemoteMilestone, error) {
-	return ghCreateMilestone(g.Run, repo, m)
-}
-func (g ExecGH) UpdateMilestone(repo string, number int, ch MilestoneChange) error {
-	return ghUpdateMilestone(g.Run, repo, number, ch)
-}

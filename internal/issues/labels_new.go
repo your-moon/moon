@@ -63,15 +63,7 @@ func (a *App) executeLabelNew(op *Op) error {
 	if repo == "" {
 		return &GhError{Msg: fmt.Sprintf("no GitHub repo behind alias %s", shortOf(op.Ref))}
 	}
-	ga := []string{"label", "create", argStr(op.Args, "name"), "-R", repo, "--force"}
-	if c := argStr(op.Args, "color"); c != "" {
-		ga = append(ga, "--color", c)
-	}
-	if d := argStr(op.Args, "description"); d != "" {
-		ga = append(ga, "--description", d)
-	}
-	_, err := a.gh(ga, "")
-	return err
+	return a.GH.CreateLabel(repo, LabelSpec{Name: argStr(op.Args, "name"), Color: argStr(op.Args, "color"), Description: argStr(op.Args, "description")})
 }
 
 // labelWaiting: a write that names a label whose create is still queued waits for it.

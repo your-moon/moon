@@ -3,7 +3,6 @@ package issues
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -188,12 +187,7 @@ func init() {
 			if argStr(o.Args, "reason") == "not_planned" {
 				reason = "not planned"
 			}
-			ga := []string{"issue", "close", c.ident, "-R", c.repo, "--reason", reason}
-			if cm := argStr(o.Args, "comment"); cm != "" {
-				ga = append(ga, "--comment", cm)
-			}
-			_, err := a.gh(ga, "")
-			return 0, err
+			return 0, a.GH.CloseIssue(c.repo, c.ident, reason, argStr(o.Args, "comment"))
 		},
 		mutate: func(short string, o *Op, id string, c *idCache) ([]mutation, error) {
 			reason := "COMPLETED"
@@ -214,8 +208,7 @@ func init() {
 			return nil
 		},
 		send: func(a *App, o *Op, c sendCtx) (int, error) {
-			_, err := a.gh([]string{"issue", "reopen", c.ident, "-R", c.repo}, "")
-			return 0, err
+			return 0, a.GH.ReopenIssue(c.repo, c.ident)
 		},
 		mutate: func(short string, o *Op, id string, c *idCache) ([]mutation, error) {
 			return []mutation{{"x", "reopenIssue", "ReopenIssueInput", map[string]any{"issueId": id}}}, nil
@@ -241,15 +234,7 @@ func init() {
 			return nil
 		},
 		send: func(a *App, o *Op, c sendCtx) (int, error) {
-			ga := []string{"issue", "edit", c.ident, "-R", c.repo}
-			if l := argList(o.Args, "add"); len(l) > 0 {
-				ga = append(ga, "--add-label", strings.Join(l, ","))
-			}
-			if l := argList(o.Args, "remove"); len(l) > 0 {
-				ga = append(ga, "--remove-label", strings.Join(l, ","))
-			}
-			_, err := a.gh(ga, "")
-			return 0, err
+			return 0, a.GH.EditIssue(c.repo, c.ident, IssueEdit{AddLabels: argList(o.Args, "add"), RemoveLabels: argList(o.Args, "remove")})
 		},
 		mutate:     mutateLabel,
 		editable:   []string{"add", "remove"},
@@ -275,14 +260,8 @@ func init() {
 			return nil
 		},
 		send: func(a *App, o *Op, c sendCtx) (int, error) {
-			ga := []string{"issue", "edit", c.ident, "-R", c.repo}
-			if argStr(o.Args, "title") == "none" {
-				ga = append(ga, "--remove-milestone")
-			} else {
-				ga = append(ga, "--milestone", argStr(o.Args, "title"))
-			}
-			_, err := a.gh(ga, "")
-			return 0, err
+			t := argStr(o.Args, "title")
+			return 0, a.GH.EditIssue(c.repo, c.ident, IssueEdit{Milestone: &t, RemoveMilestone: t == "none"})
 		},
 		mutate: func(short string, o *Op, id string, c *idCache) ([]mutation, error) {
 			in := map[string]any{"id": id, "milestoneId": nil}
@@ -331,18 +310,16 @@ func init() {
 			return nil
 		},
 		send: func(a *App, o *Op, c sendCtx) (int, error) {
-			ga := []string{"issue", "edit", c.ident, "-R", c.repo}
+			var e IssueEdit
 			if t, ok := o.Args["title"]; ok {
 				ts, _ := t.(string)
-				ga = append(ga, "--title", ts)
+				e.Title = &ts
 			}
-			body, hasBody := o.Args["body"]
-			if hasBody {
-				ga = append(ga, "--body-file", "-")
+			if body, ok := o.Args["body"]; ok {
+				bs, _ := body.(string)
+				e.Body = &bs
 			}
-			bs, _ := body.(string)
-			_, err := a.gh(ga, bs)
-			return 0, err
+			return 0, a.GH.EditIssue(c.repo, c.ident, e)
 		},
 		mutate: func(short string, o *Op, id string, c *idCache) ([]mutation, error) {
 			in := map[string]any{"id": id}
@@ -411,38 +388,19 @@ func sendNew(a *App, op *Op, c sendCtx) (int, error) {
 	if n != 0 {
 		return n, nil
 	}
-	ga := []string{"issue", "create", "-R", c.repo, "--title", argStr(args, "title"), "--body-file", "-"}
-	for _, l := range argList(args, "labels") {
-		ga = append(ga, "--label", l)
-	}
-	if m := argStr(args, "milestone"); m != "" {
-		ga = append(ga, "--milestone", m)
-	}
-	out, err := a.gh(ga, argStr(args, "body"))
-	if err != nil {
-		return 0, err
-	}
-	m := issueURLRe.FindStringSubmatch(out)
-	if m == nil {
-		return 0, &GhError{Msg: fmt.Sprintf("create printed no issue url: %q", trunc(out, 200))}
-	}
-	n, _ = strconv.Atoi(m[1])
-	return n, nil
+	return a.GH.CreateIssue(c.repo, NewIssue{Title: argStr(args, "title"), Body: argStr(args, "body"),
+		Labels: argList(args, "labels"), Milestone: argStr(args, "milestone")})
 }
 
 func sendComment(a *App, op *Op, c sendCtx) (int, error) {
 	marker := "<!-- op-id: " + op.OpID + " -->"
 	if op.Inflight { // a previous attempt may have posted it before we could record that
-		bodies, err := a.gh([]string{"api", fmt.Sprintf("repos/%s/issues/%s/comments", c.repo, c.ident), "--paginate", "--jq", ".[].body"}, "")
-		if err != nil {
+		found, err := a.GH.HasComment(c.repo, c.ident, marker)
+		if err != nil || found {
 			return 0, err
 		}
-		if strings.Contains(bodies, marker) {
-			return 0, nil
-		}
 	}
-	_, err := a.gh([]string{"issue", "comment", c.ident, "-R", c.repo, "--body-file", "-"}, pyRstrip(argStr(op.Args, "body"))+"\n\n"+marker)
-	return 0, err
+	return 0, a.GH.CommentIssue(c.repo, c.ident, pyRstrip(argStr(op.Args, "body"))+"\n\n"+marker)
 }
 
 func mutateLabel(short string, o *Op, id string, c *idCache) ([]mutation, error) {
