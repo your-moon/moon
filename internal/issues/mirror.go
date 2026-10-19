@@ -292,7 +292,11 @@ func (a *App) pruneFiles(short string) int {
 	return removed
 }
 
-func (a *App) readIndex(short string) [][]string {
+// readIndex is the mirror's index with the queued writes laid over it (see overlay.go).
+func (a *App) readIndex(short string) [][]string { return a.overlayIndex(short, a.readIndexRaw(short)) }
+
+// readIndexRaw is the index file as pull wrote it, with no queued writes applied.
+func (a *App) readIndexRaw(short string) [][]string {
 	s, err := readText(filepath.Join(a.Home, short, "index.tsv"))
 	if err != nil {
 		return nil
@@ -314,7 +318,7 @@ func clean(s string) string {
 // rebuildIndex: one row per file plus the old rows of pruned items. On a full pull, seen drops rows GitHub no longer has.
 func (a *App) rebuildIndex(short string, seen map[int]bool) error {
 	rows := map[int][]string{}
-	for _, r := range a.readIndex(short) {
+	for _, r := range a.readIndexRaw(short) {
 		n, err := strconv.Atoi(r[0])
 		if err != nil {
 			continue

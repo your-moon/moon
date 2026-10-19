@@ -14,9 +14,11 @@ import (
 
 // fakeGH is the GitHub interface for tests. Nothing here talks to a network.
 type fakeGH struct {
-	mu      sync.Mutex
-	calls   [][]string
-	handler func(args []string, stdin string) (string, error)
+	mu       sync.Mutex
+	hmu      sync.Mutex // serialises handler calls (they keep plain test state), unless parallel
+	parallel bool
+	calls    [][]string
+	handler  func(args []string, stdin string) (string, error)
 }
 
 func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, error) {
@@ -26,6 +28,10 @@ func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, erro
 	f.mu.Unlock()
 	if h == nil {
 		return "", &GhError{Msg: "fake: no handler"}
+	}
+	if !f.parallel {
+		f.hmu.Lock()
+		defer f.hmu.Unlock()
 	}
 	return h(args, stdin)
 }
@@ -38,6 +44,19 @@ func (f *fakeGH) CreateMilestone(repo string, m RemoteMilestone) (RemoteMileston
 }
 func (f *fakeGH) UpdateMilestone(repo string, n int, ch MilestoneChange) error {
 	return ghUpdateMilestone(f.Run, repo, n, ch)
+}
+
+func (f *fakeGH) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+// serialPush makes push send one write at a time, for tests that assert the global order of gh calls.
+func serialPush(t *testing.T) {
+	old := pushWorkers
+	pushWorkers = 1
+	t.Cleanup(func() { pushWorkers = old })
 }
 
 func (f *fakeGH) count(prefix ...string) int {

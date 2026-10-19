@@ -151,7 +151,7 @@ func TestNumbersNeverReused(t *testing.T) {
 		case args[0] == "issue" && args[1] == "list":
 			return "[]", nil
 		case args[0] == "issue" && args[1] == "create":
-			return "https://github.com/example/app/issues/" + strconv.Itoa(100+len(e.gh.calls)) + "\n", nil
+			return "https://github.com/example/app/issues/" + strconv.Itoa(100+e.gh.callCount()) + "\n", nil
 		}
 		return "", nil
 	}
@@ -352,7 +352,7 @@ func TestLocalOnlyRepo(t *testing.T) {
 			t.Fatalf("%s: %d %q", cmd, code, errs)
 		}
 	}
-	if len(e.gh.calls) != 0 {
+	if e.gh.callCount() != 0 {
 		t.Fatalf("gh called: %v", e.gh.calls)
 	}
 	// without --repo, local-only aliases are skipped silently next to GitHub-backed ones

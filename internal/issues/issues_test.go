@@ -179,6 +179,7 @@ func TestClaimFileFormat(t *testing.T) {
 }
 
 func TestQueueReplay(t *testing.T) {
+	serialPush(t)
 	e := newEnv(t)
 	e.tick = true
 	seedIndex(e)
@@ -217,7 +218,7 @@ func TestQueueReplay(t *testing.T) {
 		t.Fatal(code)
 	}
 	if len(posted) != 4 || !strings.HasPrefix(posted[0], "create -R example/app --title thing: broken --body-file - --label bug --label x") ||
-		posted[1] != "issue comment 40" || posted[2] != "issue comment 2" || posted[3] != "issue close 2" {
+		posted[1] != "issue comment 2" || posted[2] != "issue comment 40" || posted[3] != "issue close 2" {
 		t.Fatalf("order: %v", posted)
 	}
 	ents, _ := os.ReadDir(filepath.Join(e.home, "outbox"))
