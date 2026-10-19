@@ -634,7 +634,7 @@ func (a *App) cmdSync(o *Opts) error {
 	}
 	rc := a.doSync(remote, o.B["quiet"], a.Out, pushOnly)
 	if o.B["quiet"] { // the marker belongs to the background sync that this process is
-		os.Remove(filepath.Join(a.Home, ".autosync"))
+		a.releaseSyncMarker(pushOnly)
 	}
 	if rc != 0 {
 		return &exitError{Code: rc}
