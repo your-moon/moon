@@ -2,8 +2,6 @@ package issues
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,7 +99,7 @@ func (a *App) noMirror(shorts []string) []string {
 		if a.localOnly(s) {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(a.Home, s, "index.tsv")); err != nil {
+		if !a.mirror().hasIndex(s) {
 			out = append(out, s)
 		}
 	}
@@ -217,7 +215,7 @@ func (a *App) labelColors(short string) map[string]string {
 		return m
 	}
 	m := map[string]string{}
-	if s, err := readText(filepath.Join(a.Home, short, "labels.tsv")); err == nil {
+	if s, err := a.mirror().readLabelsText(short); err == nil {
 		for _, line := range splitLines(s) {
 			if p := strings.Split(line, "\t"); len(p) >= 2 && p[1] != "" {
 				m[p[0]] = p[1]

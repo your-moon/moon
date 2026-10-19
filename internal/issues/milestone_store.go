@@ -2,7 +2,6 @@ package issues
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -72,11 +71,9 @@ func (r msRec) row() string {
 	return strings.Join([]string{num, r.LocalID, clean(r.Title), r.State, r.Due, escField(r.Desc), r.Updated}, "\t")
 }
 
-func (a *App) msPath(short string) string { return filepath.Join(a.Home, short, "milestones.tsv") }
-
 // readMsFile parses milestones.tsv (either layout). A missing file is no rows.
 func (a *App) readMsFile(short string) []msRec {
-	s, err := readText(a.msPath(short))
+	s, err := a.mirror().readMsText(short)
 	if err != nil {
 		return nil
 	}
@@ -106,7 +103,7 @@ func (a *App) writeMsFile(short string, recs []msRec) error {
 		}
 		b.WriteString(r.row() + "\n")
 	}
-	return atomicWrite(a.msPath(short), b.String(), false)
+	return a.mirror().writeMsText(short, b.String())
 }
 
 var opMarkerRe = regexp.MustCompile(`\s*<!-- moon-op: [^>]*-->`)
@@ -122,7 +119,7 @@ func dueDate(s string) string {
 // msLocalIDs maps a GitHub milestone number to the M-<n> it was created under, from localmap.tsv.
 func (a *App) msLocalIDs(short string) map[int]string {
 	out := map[int]string{}
-	s, err := readText(a.localmap())
+	s, err := a.mirror().readLocalmap()
 	if err != nil {
 		return out
 	}

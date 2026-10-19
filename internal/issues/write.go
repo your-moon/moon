@@ -19,7 +19,7 @@ func (a *App) readBody(o *Opts) (string, bool, error) {
 			b, err := io.ReadAll(a.Stdin)
 			return string(b), true, err
 		}
-		s, err := readText(f)
+		s, err := readUserText(f)
 		return s, true, err
 	}
 	if o.Seen["body"] {
@@ -50,7 +50,7 @@ func (a *App) findByMarker(short, lid, opTS string) (int, error) {
 	}
 	marker := "<!-- local-id: " + lid + " -->"
 	for _, p := range a.mirrorIssueFiles(short) {
-		s, err := readText(p)
+		s, err := readMirrorFile(p)
 		if err == nil && strings.Contains(s, marker) {
 			n, _ := strconv.Atoi(strings.TrimSuffix(filepath.Base(p), ".md"))
 			return n, nil
@@ -84,7 +84,7 @@ func (a *App) rewriteRefs(old, new string) {
 	for _, o := range a.loadOutbox() {
 		if o.Ref == old {
 			o.Ref = new
-			a.saveOp(o)
+			a.mirror().saveOp(o)
 		}
 	}
 }
@@ -162,7 +162,7 @@ type sent struct {
 // push sends the outbox, one attempt per op per run, up to pushWorkers at a time (order kept per orderKey).
 // Returns (pushed, failed, busy).
 func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
-	f, ok := a.tryPushLock()
+	f, ok := a.mirror().tryPushLock()
 	if !ok {
 		return 0, 0, true
 	}
@@ -212,7 +212,7 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 					tried[op.OpID], busy[orderKey(op)] = true, true
 					if op.Op == "comment" {
 						op.Inflight = true
-						a.saveOp(op) // a lost answer must make the retry look for the comment first
+						a.mirror().saveOp(op) // a lost answer must make the retry look for the comment first
 						op.Inflight = false
 					}
 				}
@@ -236,7 +236,7 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 			go func() {
 				if op.Op == "comment" && !op.Inflight {
 					op.Inflight = true
-					a.saveOp(op)
+					a.mirror().saveOp(op)
 					op.Inflight = false // first attempt: no marker lookup needed
 				}
 				num, err := a.execute(op)
@@ -264,7 +264,7 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 			op.LastError = &msg
 			ge, isGh := err.(*GhError)
 			op.Inflight = !(isGh && !ge.Timeout)
-			a.saveOp(op)
+			a.mirror().saveOp(op)
 			badRefs[op.Ref] = true
 			failed++
 			continue
@@ -272,14 +272,12 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 		if num != 0 {
 			short, lid, _ := a.parseRef(op.Ref)
 			real := fmt.Sprintf("%s#%d", short, num)
-			lm, _ := os.OpenFile(a.localmap(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-			fmt.Fprintf(lm, "%s\t%s\t%d\n", short, lid, num)
-			lm.Close()
+			a.mirror().appendLocalmap(short, lid, num)
 			a.rewriteRefs(op.Ref, real)
-			os.Remove(op.File)
+			a.mirror().removeOp(op.File)
 			a.rewriteRefs(op.Ref, real) // second scan: catches writers that raced the first one
 		} else {
-			os.Remove(op.File) // M_remove
+			a.mirror().removeOp(op.File) // M_remove
 		}
 		pushed++
 	}
@@ -582,7 +580,7 @@ func (a *App) cmdPrune(o *Opts) error {
 	parts := []string{}
 	remote, _ := a.splitLocal(a.shortsFor(o)) // local-only issues are canonical: never pruned
 	for _, short := range remote {
-		a.withLock(".pull.lock", func() error {
+		a.mirror().withLock(".pull.lock", func() error {
 			parts = append(parts, fmt.Sprintf("%s=%d", short, a.pruneFiles(short)))
 			return nil
 		})
@@ -689,12 +687,13 @@ func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
 	if _, _, err := a.parseRef(ref); err != nil {
 		return "", err
 	}
-	os.MkdirAll(a.claimsDir(), 0o755)
+	m := a.mirror()
+	m.ensureClaimsDir()
 	path, _ := a.claimPath(ref)
 	mine := &Claim{agent, pid, a.Host, a.nowEpoch(), float64(ttl)}
 	body := mine.marshal()
 	for {
-		if err := createExcl(path, body+"\n"); err == nil { // M_excl
+		if err := m.createClaim(path, body+"\n"); err == nil { // M_excl
 			return fmt.Sprintf("claimed %s for %s", ref, agent), nil
 		} else if !os.IsExist(err) {
 			return "", err
@@ -704,7 +703,7 @@ func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
 			continue // released between our open and read: retry
 		}
 		if cur.Agent == agent && !a.claimIsStale(cur) {
-			atomicWrite(path, body+"\n", false)
+			m.writeClaim(path, body+"\n")
 			return fmt.Sprintf("renewed claim on %s for %s", ref, agent), nil
 		}
 		if !a.claimIsStale(cur) {
@@ -712,16 +711,16 @@ func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
 		}
 		// stale: exactly one taker wins the rename, then races everyone else on O_EXCL
 		gone := path + ".stale." + strings.ReplaceAll(uuid4(), "-", "")
-		if err := os.Rename(path, gone); err != nil {
+		if err := m.renameClaim(path, gone); err != nil {
 			return fmt.Sprintf("TAKEN %s was just taken over by someone else", ref), ErrHeld
 		}
 		moved := a.readClaim(gone)
-		os.Remove(gone)
+		m.remove(gone)
 		if moved != nil && !a.claimIsStale(moved) { // we renamed a fresh claim that replaced the stale one
-			createExcl(path, moved.marshal()+"\n")
+			m.createClaim(path, moved.marshal()+"\n")
 			return a.heldMsg(ref, moved), ErrHeld
 		}
-		if err := createExcl(path, body+"\n"); err != nil {
+		if err := m.createClaim(path, body+"\n"); err != nil {
 			return fmt.Sprintf("TAKEN %s was just taken by someone else", ref), ErrHeld
 		}
 		return fmt.Sprintf("took over stale claim on %s (was %s); now held by %s", ref, a.holderText(cur), agent), nil

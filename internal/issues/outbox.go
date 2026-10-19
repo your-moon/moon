@@ -2,33 +2,15 @@ package issues
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // moon issues outbox: look at the queued writes, fix one that cannot be sent, or drop it. Before this the only
 // repair for a write stuck in sync (a bad label on a `new`, say) was editing the JSON under <mirror>/outbox.
 
-// tryPushLock takes the lock that push holds while it sends the queue. ok is false when another push is
-// running; the caller closes the file to release the lock.
-func (a *App) tryPushLock() (f *os.File, ok bool) {
-	os.MkdirAll(a.Home, 0o755)
-	f, err := os.OpenFile(filepath.Join(a.Home, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, false
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil { // M_pushlock
-		f.Close()
-		return nil, false
-	}
-	return f, true
-}
-
 // withQueueLock runs fn while no push is running, so a drop or edit cannot race the send of the same op.
 func (a *App) withQueueLock(fn func() error) error {
-	f, ok := a.tryPushLock()
+	f, ok := a.mirror().tryPushLock()
 	if !ok {
 		return die1("a push is running; try again in a moment")
 	}
@@ -152,7 +134,7 @@ func (a *App) cmdOutboxDrop(o *Opts) error {
 	}
 	return a.withQueueLock(func() error {
 		for _, d := range append(deps, op) {
-			if err := os.Remove(d.File); err != nil && !isNotExist(err) {
+			if err := a.mirror().removeOp(d.File); err != nil && !isNotExist(err) {
 				return err
 			}
 			a.printf("dropped %s  %s %s\n", d.OpID, d.Op, d.Ref)
@@ -190,7 +172,7 @@ func (a *App) cmdOutboxRetry(o *Opts) error {
 	}
 	return a.withQueueLock(func() error {
 		op.Permanent, op.LastError, op.Attempts = false, nil, 0
-		if err := a.saveOp(op); err != nil {
+		if err := a.mirror().saveOp(op); err != nil {
 			return err
 		}
 		a.printf("retry %s  %s %s\n", op.OpID, op.Op, op.Ref)

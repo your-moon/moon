@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,10 +76,6 @@ func (a *App) styler() *Styler {
 // P paints text in a palette role, or returns it unchanged when colour is off.
 func (a *App) P(role, text string) string { return a.styler().P(role, text) }
 
-func (a *App) outbox() string    { return filepath.Join(a.Home, "outbox") }
-func (a *App) claimsDir() string { return filepath.Join(a.Home, "claims") }
-func (a *App) localmap() string  { return filepath.Join(a.Home, "localmap.tsv") }
-
 func (a *App) nowEpoch() float64 {
 	if v := a.Environ("ISSUES_TEST_NOW"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -100,57 +95,9 @@ func (a *App) nowISO() string { return a.Now().Format("2006-01-02T15:04:05") }
 
 // ---------- disk primitives ----------
 
-func atomicWrite(path, text string, fsync bool) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		return err
-	}
-	if fsync {
-		f.Sync()
-	}
-	f.Close()
-	return os.Rename(tmp, path)
-}
-
-// readText reads a file with Python's universal-newline translation.
-func readText(path string) (string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	s := string(b)
-	if strings.Contains(s, "\r") {
-		s = strings.ReplaceAll(s, "\r\n", "\n")
-		s = strings.ReplaceAll(s, "\r", "\n")
-	}
-	return s, nil
-}
+// The file primitives (atomicWrite, readText, createExcl, locks) live in mirrorstore.go.
 
 func isNotExist(err error) bool { return errors.Is(err, os.ErrNotExist) }
-
-// withLock takes a blocking flock on <home>/<name> for the duration of fn.
-func (a *App) withLock(name string, fn func() error) error {
-	if err := os.MkdirAll(a.Home, 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(filepath.Join(a.Home, name), os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	return fn()
-}
 
 func pyRstrip(s string) string {
 	return strings.TrimRightFunc(s, func(r rune) bool {
@@ -338,8 +285,6 @@ func (o *Op) marshal() string {
 	return dumps(ob, false) + "\n"
 }
 
-func (a *App) saveOp(o *Op) error { return atomicWrite(o.File, o.marshal(), true) }
-
 func parseOp(data []byte, file string) (*Op, error) {
 	var raw struct {
 		OpID      string         `json:"op_id"`
@@ -363,21 +308,10 @@ func parseOp(data []byte, file string) (*Op, error) {
 
 // loadOutbox returns all pending ops, oldest first. No lock needed.
 func (a *App) loadOutbox() []*Op {
-	ents, err := os.ReadDir(a.outbox())
-	if err != nil {
-		return nil
-	}
-	names := []string{}
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
+	m := a.mirror()
 	var ops []*Op
-	for _, n := range names {
-		p := filepath.Join(a.outbox(), n)
-		b, err := os.ReadFile(p)
+	for _, p := range m.opFiles() {
+		b, err := m.readOpBytes(p)
 		if err != nil {
 			continue
 		}
@@ -407,7 +341,7 @@ func argList(m map[string]any, k string) []string {
 }
 
 func (a *App) localmapLookup(short, lid string) int {
-	s, err := readText(a.localmap())
+	s, err := a.mirror().readLocalmap()
 	if err != nil {
 		return 0
 	}
@@ -446,15 +380,15 @@ func (a *App) enqueue(op, ref string, args map[string]any) (string, string, erro
 	}
 	t := a.Now()
 	stem := fmt.Sprintf("%s.%06d-%d-%s", t.Format("20060102T150405"), t.UnixMicro()%1000000, os.Getpid(), uuid4())
-	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, File: filepath.Join(a.outbox(), stem+".json")}
-	if err := a.saveOp(o); err != nil {
+	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, File: a.mirror().opFile(stem)}
+	if err := a.mirror().saveOp(o); err != nil {
 		return "", "", err
 	}
 	s2, i2, _ := a.parseRef(o.Ref)
 	if isLocalIdent(i2) && op != "new" && !a.hasPendingCreate(o.Ref) {
 		if n := a.localmapLookup(s2, i2); n != 0 {
 			o.Ref = fmt.Sprintf("%s#%d", s2, n)
-			if err := a.saveOp(o); err != nil {
+			if err := a.mirror().saveOp(o); err != nil {
 				return "", "", err
 			}
 		}
@@ -481,12 +415,12 @@ func (a *App) claimPath(ref string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(a.claimsDir(), short+"-"+ident+".json"), nil
+	return a.mirror().claimFile(short, ident), nil
 }
 
 // readClaim returns nil if absent. A claim that is mid-write counts as fresh.
 func (a *App) readClaim(path string) *Claim {
-	b, err := os.ReadFile(path)
+	b, err := a.mirror().readClaimBytes(path)
 	if err != nil {
 		if isNotExist(err) {
 			return nil
@@ -567,18 +501,8 @@ func (a *App) releaseClaim(ref, agent string, force bool) string {
 	if !force && agent != c.Agent {
 		return "held by " + c.Agent
 	}
-	os.Remove(p)
+	a.mirror().remove(p)
 	return "released"
-}
-
-func createExcl(path, body string) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteString(body)
-	f.Close()
-	return err
 }
 
 var _ = bytes.NewBuffer

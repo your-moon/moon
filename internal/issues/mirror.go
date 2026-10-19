@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -83,18 +82,7 @@ type prNode struct {
 }
 
 func (a *App) mirrorIssueFiles(short string) []string {
-	d := filepath.Join(a.Home, short)
-	ents, err := os.ReadDir(d)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".md") && !e.IsDir() {
-			out = append(out, filepath.Join(d, e.Name()))
-		}
-	}
-	return out
+	return a.mirror().issueFiles(short)
 }
 
 func login(a *struct {
@@ -142,7 +130,7 @@ func renderIssue(n *issueNode) string {
 
 // readHeader parses the front matter of a mirror file. nil if the file has none.
 func readHeader(path string) map[string]any {
-	s, err := readText(path)
+	s, err := readMirrorFile(path)
 	if err != nil {
 		return nil
 	}
@@ -220,13 +208,9 @@ func (a *App) guardedRefs() map[string]bool {
 	for _, o := range a.loadOutbox() {
 		refs[o.Ref] = true
 	}
-	if ents, err := os.ReadDir(a.claimsDir()); err == nil {
-		for _, e := range ents {
-			if strings.HasSuffix(e.Name(), ".json") {
-				short, ident, _ := strings.Cut(strings.TrimSuffix(e.Name(), ".json"), "-")
-				refs[short+"#"+ident] = true
-			}
-		}
+	for _, name := range a.mirror().claimNames() {
+		short, ident, _ := strings.Cut(strings.TrimSuffix(name, ".json"), "-")
+		refs[short+"#"+ident] = true
 	}
 	return refs
 }
@@ -239,22 +223,19 @@ func (a *App) pruneFiles(short string) int {
 		num := strings.TrimSuffix(filepath.Base(p), ".md")
 		h := readHeader(p)
 		if h != nil && a.agedOut(hStr(h, "state"), hStr(h, "updated_at")) && !guard[short+"#"+num] { // M_guard
-			os.Remove(p)
+			a.mirror().remove(p)
 			removed++
 		}
 	}
 	rows := a.readPRs(short)
-	pd := filepath.Join(a.Home, short, "pr")
-	ents, _ := os.ReadDir(pd)
-	for _, e := range ents {
-		n := e.Name()
+	for _, n := range a.mirror().prFileNames(short) {
 		num := ""
 		if len(n) > 3 {
 			num = n[:len(n)-3]
 		}
 		r, ok := rows[num]
 		if strings.HasSuffix(n, ".md") && ok && a.agedOut(r.State, r.MergedAt, r.UpdatedAt) && !guard[short+"#"+num] { // M_guard
-			os.Remove(filepath.Join(pd, n))
+			a.mirror().removePRFile(short, n)
 			removed++
 		}
 	}
@@ -266,7 +247,7 @@ func (a *App) readIndex(short string) [][]string { return a.overlayIndex(short, 
 
 // readIndexRaw is the index file as pull wrote it, with no queued writes applied.
 func (a *App) readIndexRaw(short string) [][]string {
-	s, err := readText(filepath.Join(a.Home, short, "index.tsv"))
+	s, err := a.mirror().readIndexText(short)
 	if err != nil {
 		return nil
 	}
@@ -325,7 +306,7 @@ func (a *App) rebuildIndex(short string, seen map[int]bool, only map[int]bool) e
 	for _, n := range nums {
 		b.WriteString(strings.Join(rows[n], "\t") + "\n")
 	}
-	_, err := writeIfChanged(filepath.Join(a.Home, short, "index.tsv"), b.String())
+	_, err := a.mirror().writeIndexText(short, b.String())
 	return err
 }
 
@@ -391,7 +372,7 @@ func renderPR(n *prNode, r PRRow) string {
 
 func (a *App) readPRs(short string) map[string]PRRow {
 	rows := map[string]PRRow{}
-	s, err := readText(filepath.Join(a.Home, short, "prs.tsv"))
+	s, err := a.mirror().readPRsText(short)
 	if err != nil {
 		return rows
 	}
@@ -404,13 +385,6 @@ func (a *App) readPRs(short string) map[string]PRRow {
 	return rows
 }
 
-func writeIfChanged(p, text string) (bool, error) {
-	if old, err := readText(p); err == nil && old == text {
-		return false, nil
-	}
-	return true, atomicWrite(p, text, false)
-}
-
 type prPage struct {
 	PageInfo pageInfo  `json:"pageInfo"`
 	Nodes    []*prNode `json:"nodes"`
@@ -418,13 +392,12 @@ type prPage struct {
 
 // pullPRs mirrors pull requests. first is page one when the issues query already fetched it (nil: ask for it).
 func (a *App) pullPRs(short string, full bool, first *prPage) (int, error) {
-	d := filepath.Join(a.Home, short)
-	if err := os.MkdirAll(filepath.Join(d, "pr"), 0o755); err != nil {
+	m := a.mirror()
+	if err := m.ensurePRDir(short); err != nil {
 		return 0, err
 	}
-	cpath := filepath.Join(d, "prcursor")
 	cursor := ""
-	if s, err := readText(cpath); err == nil {
+	if s, err := m.readPRCursor(short); err == nil {
 		cursor = pyStrip(s)
 	}
 	if cursor == "" {
@@ -451,10 +424,10 @@ func (a *App) pullPRs(short string, full bool, first *prPage) (int, error) {
 			}
 			batch = append(batch, n)
 		}
-		err := a.withLock(".pull.lock", func() error {
+		err := a.mirror().withLock(".pull.lock", func() error {
 			for _, n := range batch {
 				row := prRowOf(n)
-				ch, err := writeIfChanged(filepath.Join(d, "pr", fmt.Sprintf("%d.md", n.Number)), renderPR(n, row))
+				ch, err := m.writePRText(short, n.Number, renderPR(n, row))
 				if err != nil {
 					return err
 				}
@@ -479,11 +452,11 @@ func (a *App) pullPRs(short string, full bool, first *prPage) (int, error) {
 			for _, k := range nums {
 				b.WriteString(rows[k].tsv())
 			}
-			if _, err := writeIfChanged(filepath.Join(d, "prs.tsv"), b.String()); err != nil {
+			if _, err := m.writePRsText(short, b.String()); err != nil {
 				return err
 			}
 			if maxu != "" {
-				_, err := writeIfChanged(cpath, maxu+"\n")
+				_, err := m.writePRCursor(short, maxu+"\n")
 				return err
 			}
 			return nil
@@ -532,16 +505,15 @@ func (a *App) fetchIssueLive(short, num string) (*issueNode, error) {
 // pull mirrors one repo. Returns the number of files written.
 func (a *App) pull(short string, full bool) (int, error) {
 	wantFull := full
-	d := filepath.Join(a.Home, short)
-	if err := os.MkdirAll(d, 0o755); err != nil {
+	m := a.mirror()
+	if err := m.ensureRepoDir(short); err != nil {
 		return 0, err
 	}
-	cpath := filepath.Join(d, "cursor")
 	cursor := ""
-	if s, err := readText(cpath); err == nil {
+	if s, err := m.readCursor(short); err == nil {
 		cursor = pyStrip(s)
 	}
-	if _, err := os.Stat(filepath.Join(d, "lastpull")); cursor == "" || err != nil {
+	if cursor == "" || !m.hasLastpull(short) {
 		full = true // no earlier pull to be a delta of
 	}
 	var since string
@@ -567,7 +539,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 				}
 				fmt.Fprintf(&lb, "%s\t%s\t%s\n", clean(l.Name), clean(l.Color), clean(desc))
 			}
-			if err := a.withLock(".pull.lock", func() error { return atomicWrite(filepath.Join(d, "labels.tsv"), lb.String(), false) }); err != nil {
+			if err := a.mirror().withLock(".pull.lock", func() error { return m.writeLabelsText(short, lb.String()) }); err != nil {
 				return changed, err
 			}
 		}
@@ -582,7 +554,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 				recs = append(recs, msRec{Number: m.Number, LocalID: ids[m.Number], Title: m.Title, State: strings.ToLower(m.State), Due: due,
 					Desc: pyStrip(opMarkerRe.ReplaceAllString(m.Description, "")), Updated: m.UpdatedAt})
 			}
-			if err := a.withLock(".pull.lock", func() error { return a.writeMsFile(short, recs) }); err != nil {
+			if err := a.mirror().withLock(".pull.lock", func() error { return a.writeMsFile(short, recs) }); err != nil {
 				return changed, err
 			}
 		}
@@ -602,9 +574,9 @@ func (a *App) pull(short string, full bool) (int, error) {
 			}
 			rs = append(rs, rendered{n.Number, renderIssue(n), n.UpdatedAt})
 		}
-		err = a.withLock(".pull.lock", func() error {
+		err = a.mirror().withLock(".pull.lock", func() error {
 			for _, r := range rs {
-				ch, err := writeIfChanged(filepath.Join(d, fmt.Sprintf("%d.md", r.num)), r.text)
+				ch, err := m.writeIssueText(short, r.num, r.text)
 				if err != nil {
 					return err
 				}
@@ -618,7 +590,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 				}
 			}
 			if maxu != "" {
-				_, err := writeIfChanged(cpath, maxu+"\n")
+				_, err := m.writeCursor(short, maxu+"\n")
 				return err
 			}
 			return nil
@@ -634,12 +606,12 @@ func (a *App) pull(short string, full bool) (int, error) {
 	if _, err := a.pullPRs(short, wantFull, prFirst); err != nil {
 		return changed, err
 	}
-	err := a.withLock(".pull.lock", func() error {
+	err := a.mirror().withLock(".pull.lock", func() error {
 		if full {
 			for _, p := range a.mirrorIssueFiles(short) {
 				n, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(p), ".md"))
 				if err == nil && !seen[n] { // M_full_delete
-					os.Remove(p)
+					m.remove(p)
 				}
 			}
 		}
@@ -655,7 +627,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 			return err
 		}
 		a.pruneFiles(short)
-		return atomicWrite(filepath.Join(d, "lastpull"), fmt.Sprintf("%d\n", int64(math.Floor(float64(a.Now().Unix())))), false)
+		return m.writeLastpull(short, fmt.Sprintf("%d\n", int64(math.Floor(float64(a.Now().Unix())))))
 	})
 	return changed, err
 }

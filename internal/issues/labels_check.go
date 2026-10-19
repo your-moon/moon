@@ -2,7 +2,6 @@ package issues
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -14,7 +13,7 @@ const labelsFetched = 100
 // repoLabels are the label names `pull` mirrored for a repo. ok is false when the list cannot vouch for
 // absence: never pulled, or as long as one fetch can be.
 func (a *App) repoLabels(short string) (names []string, ok bool) {
-	s, err := readText(filepath.Join(a.Home, short, "labels.tsv"))
+	s, err := a.mirror().readLabelsText(short)
 	if err != nil {
 		return nil, false
 	}

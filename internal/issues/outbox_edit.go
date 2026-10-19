@@ -45,7 +45,7 @@ func (a *App) cmdOutboxEdit(o *Opts) error {
 			return err
 		}
 		op.Args, op.LastError, op.Permanent = args, nil, false // the old error was about the old fields
-		if err := a.saveOp(op); err != nil {
+		if err := a.mirror().saveOp(op); err != nil {
 			return err
 		}
 		a.printf("edited %s  %s %s  %s\n", op.OpID, op.Op, op.Ref, oneLine(outboxSummary(op)))
