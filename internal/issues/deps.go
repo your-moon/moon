@@ -166,7 +166,7 @@ func (w *workEnv) isOpen(short string, n int) bool {
 
 func (w *workEnv) outbox() []*Op {
 	if !w.outboxRead {
-		w.ops, w.outboxRead = w.a.loadOutbox(), true
+		w.ops, w.outboxRead = w.a.overlayOps(), true
 	}
 	return w.ops
 }
