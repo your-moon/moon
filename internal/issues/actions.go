@@ -43,7 +43,8 @@ var actions = []Action{
 	},
 	{
 		Name: "release", Help: "drop your claim",
-		allow: func(it Item, _ string) bool { return it.Claim != nil },
+		// release drops the agent's own claim; someone else's is never forced (stale or not)
+		allow: func(it Item, agent string) bool { return it.Claim != nil && it.Claim.Agent == agent },
 		run: func(s *Session, ref, agent string, _ []string) (string, error) {
 			msg, err := s.app.release(ref, agent, false) // someone else's claim returns ErrHeld, never forced
 			return strings.TrimSpace(msg), err
@@ -116,12 +117,22 @@ func ActionNamed(name string) (Action, bool) {
 
 // Do runs the named action on ref as agent and returns the footer message. The write is queued locally (or a
 // claim file written) like the CLI command of the same name, and queued writes start the background push
-// themselves. Do does not check Allows: callers that can see the item do (and word the refusal); a claim
-// or release held by someone else is refused here with ErrHeld.
+// themselves. Do enforces Allows: an action that does not apply is refused and nothing is written. A claim or
+// release held by someone else is refused with ErrHeld and the CLI's message.
 func (s *Session) Do(name, ref, agent string, args []string) (string, error) {
 	a, ok := ActionNamed(name)
 	if !ok {
 		return "", fmt.Errorf("unknown action %q", name)
+	}
+	// An issue the mirror cannot show is left to the action itself, which reports its own error.
+	if d, err := s.Detail(ref); err == nil {
+		it := Item{Ref: ref, State: d.State, Claim: d.Claim}
+		if !a.Allows(it, agent) {
+			if c := it.Claim; c != nil && c.Agent != agent && (name == "claim" || name == "release") {
+				return a.run(s, ref, agent, args) // held by someone else: the CLI's message and ErrHeld
+			}
+			return "", die("%s does not apply to %s", name, ref)
+		}
 	}
 	return a.run(s, ref, agent, args)
 }

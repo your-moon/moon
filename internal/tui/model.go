@@ -972,7 +972,7 @@ func (m *Model) act(name, ref string, args ...string) bool {
 	}
 	a, _ := issues.ActionNamed(name)
 	agent := m.opt.Agent
-	if !a.Allows(*it, agent) || (name == "release" && it.Claim.Agent != agent) {
+	if !a.Allows(*it, agent) {
 		m.msg = refusal(name, it)
 		return false
 	}

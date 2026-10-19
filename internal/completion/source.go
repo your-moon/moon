@@ -15,6 +15,7 @@ type Source interface {
 	Items() []issues.Item
 	Milestones() []issues.MilestoneRow
 	PRs() []issues.PRItem
+	Agent() string // who is asking: the claims they may release or renew
 }
 
 // SessionSource reads a mirror through an issues.Session, once and lazily.
@@ -68,16 +69,6 @@ func (s *SessionSource) Scope() []string {
 		return sc.Repos
 	}
 	return nil
-}
-
-// agented is implemented by a Source that knows who is asking, so claim offers that agent's own claims.
-type agented interface{ Agent() string }
-
-func agentOf(s Source) string {
-	if a, ok := s.(agented); ok {
-		return a.Agent()
-	}
-	return ""
 }
 
 // scoped is implemented by a Source that knows the project scope; a Source without it offers every repo.
