@@ -3,7 +3,6 @@ package issues
 import (
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,13 +12,7 @@ import (
 // the outbox (ms_new, ms_edit, ms_close, ms_reopen) and `sync` sends it; a milestone created here is
 // M-<n> until then. For a local-only repo the same commands write <alias>/milestones.tsv directly.
 
-// ---------- M-<n> counter ----------
-
-// nextMilestoneSeq hands out the next M-<n> (or, for a local-only repo, the next milestone number).
-// Same design as nextLocalSeq: an exclusive flock on a sidecar, a counter that only goes up.
-func (a *App) nextMilestoneSeq(short string) (int, error) {
-	return a.mirror().LocalIDs.Next(short, famMilestone, func() int { return a.scanMaxMsSeq(short) })
-}
+// ---------- M-<n> ids ----------
 
 func msSeqOf(id string) int {
 	if m := msRefRe.FindStringSubmatch(id); m != nil {
@@ -27,33 +20,6 @@ func msSeqOf(id string) int {
 		return n
 	}
 	return 0
-}
-
-// scanMaxMsSeq rebuilds a lost counter from the outbox, localmap and milestones.tsv.
-func (a *App) scanMaxMsSeq(short string) int {
-	max := 0
-	note := func(n int) {
-		if n > max {
-			max = n
-		}
-	}
-	for _, o := range a.loadOutbox() {
-		if o.Op == "ms_new" && shortOf(o.Ref) == short {
-			note(msSeqOf(argStr(o.Args, "local_id")))
-		}
-	}
-	for _, r := range a.mirror().LocalIDs.Rows() {
-		if r.Short == short {
-			note(msSeqOf(r.Lid))
-		}
-	}
-	for _, r := range a.readMsFile(short) {
-		note(msSeqOf(r.LocalID))
-		if a.localOnly(short) {
-			note(r.Number)
-		}
-	}
-	return max
 }
 
 // ---------- arguments ----------
@@ -112,14 +78,6 @@ func dupError(short, title string, d *msRec) error {
 	return die("%s", msg)
 }
 
-// enqueueMs queues one milestone op. Milestone refs are not issue refs, so this skips parseRef.
-func (a *App) enqueueMs(op, ref string, args map[string]any) (string, error) {
-	t := a.Now()
-	stem := fmt.Sprintf("%s.%06d-%d-%s", t.Format("20060102T150405"), t.UnixMicro()%1000000, os.Getpid(), uuid4())
-	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, Key: stem}
-	return stem, a.mirror().saveOp(o)
-}
-
 // ---------- commands ----------
 
 func (a *App) cmdMsNew(o *Opts) error {
@@ -143,7 +101,7 @@ func (a *App) cmdMsNew(o *Opts) error {
 		if d := msDup(a.msRecs(short), title, ""); d != nil {
 			return dupError(short, title, d)
 		}
-		n, err := a.nextMilestoneSeq(short)
+		n, err := a.nextLocalID(short, famMilestone)
 		if err != nil {
 			return err
 		}
@@ -158,7 +116,7 @@ func (a *App) cmdMsNew(o *Opts) error {
 			return err
 		}
 		lid := fmt.Sprintf("M-%d", n)
-		opID, err := a.enqueueMs("ms_new", short+"#"+lid, map[string]any{"title": title, "description": desc, "due": due, "local_id": lid})
+		opID, _, err := a.enqueue("ms_new", short+"#"+lid, map[string]any{"title": title, "description": desc, "due": due, "local_id": lid})
 		if err != nil {
 			return err
 		}
@@ -238,7 +196,7 @@ func (a *App) msChange(short string, rec msRec, op string, args map[string]any) 
 	if rec.Number == 0 && rec.LocalID != "" {
 		args["local_id"], ref = rec.LocalID, short+"#"+rec.LocalID
 	}
-	opID, err := a.enqueueMs(op, ref, args)
+	opID, _, err := a.enqueue(op, ref, args)
 	if err != nil {
 		return err
 	}
@@ -263,7 +221,7 @@ func (a *App) applyMsLocalOnly(short, title, op string, args map[string]any) err
 				if _, open, _ := a.msCounts(short); open[title] == 0 {
 					st = "closed"
 				}
-				n, err := a.nextMilestoneSeq(short)
+				n, err := a.nextLocalID(short, famMilestone)
 				if err != nil {
 					return err
 				}
@@ -333,10 +291,7 @@ func msWaiting(ops []*Op, i int) bool {
 		if j == i || shortOf(p.Ref) != short {
 			continue
 		}
-		switch {
-		case p.Op == "ms_new" && strings.EqualFold(argStr(p.Args, "title"), title):
-			return true
-		case p.Op == "ms_edit" && j < i && strings.EqualFold(argStr(p.Args, "new_title"), title):
+		if k := kindOrNil(p.Op); k != nil && k.makesTitle != nil && strings.EqualFold(k.makesTitle(p, j < i), title) {
 			return true
 		}
 	}

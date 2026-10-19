@@ -358,24 +358,35 @@ func (a *App) hasPendingCreate(ref string) bool {
 	return false
 }
 
-// enqueue writes one new file per op. An op on an L-ref is resolved to the real number if its create already landed.
+// enqueue writes one new file per op, whatever its family. An issue op on an L-ref is resolved to the real
+// number if its create already landed; the refs of the other families (milestones, labels) are not issue refs
+// and are queued as given.
 func (a *App) enqueue(op, ref string, args map[string]any) (string, string, error) {
-	short, ident, err := a.parseRef(ref)
-	if err != nil {
-		return "", "", err
+	issueRef := true
+	if k := kindOrNil(op); k != nil && k.family != famIssue {
+		issueRef = false
 	}
-	if isLocalIdent(ident) && op != "new" && !a.hasPendingCreate(ref) {
-		n := a.localmapLookup(short, ident)
-		if n == 0 {
-			return "", "", die("unknown local issue %s (not in the outbox, not in localmap)", ref)
+	if issueRef {
+		short, ident, err := a.parseRef(ref)
+		if err != nil {
+			return "", "", err
 		}
-		ref = fmt.Sprintf("%s#%d", short, n)
+		if isLocalIdent(ident) && op != "new" && !a.hasPendingCreate(ref) {
+			n := a.localmapLookup(short, ident)
+			if n == 0 {
+				return "", "", die("unknown local issue %s (not in the outbox, not in localmap)", ref)
+			}
+			ref = fmt.Sprintf("%s#%d", short, n)
+		}
 	}
 	t := a.Now()
 	stem := fmt.Sprintf("%s.%06d-%d-%s", t.Format("20060102T150405"), t.UnixMicro()%1000000, os.Getpid(), uuid4())
 	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, Key: stem}
 	if err := a.mirror().saveOp(o); err != nil {
 		return "", "", err
+	}
+	if !issueRef {
+		return stem, o.Ref, nil
 	}
 	s2, i2, _ := a.parseRef(o.Ref)
 	if isLocalIdent(i2) && op != "new" && !a.hasPendingCreate(o.Ref) {

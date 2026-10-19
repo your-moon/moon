@@ -51,6 +51,9 @@ type opKind struct {
 	// queued create of them.
 	waitTitle  func(o *Op) string
 	labelsUsed func(o *Op) []string
+	// makesTitle is the milestone title the write brings into being (a create, a rename), or "". queuedBefore
+	// says whether it sits earlier in the outbox than the write that would wait for it.
+	makesTitle func(o *Op, queuedBefore bool) string
 }
 
 var opKinds map[string]*opKind
@@ -337,12 +340,24 @@ func init() {
 		describe: func(o *Op) string { return "create label " + argStr(o.Args, "name") },
 		send:     func(a *App, o *Op, _ sendCtx) (int, error) { return 0, a.executeLabelNew(o) }})
 
-	add(&opKind{name: "ms_new", family: famMilestone, describe: nameOnly, applyEff: noEff, applyLocal: notLocal,
-		send: func(a *App, o *Op, _ sendCtx) (int, error) { return 0, a.executeMsNew(o) }})
+	add(&opKind{name: "ms_new", family: famMilestone, creates: true, describe: nameOnly, applyEff: noEff, applyLocal: notLocal,
+		applyMs: func(r *msRec, args map[string]any) {
+			r.LocalID, r.Title, r.key, r.State = argStr(args, "local_id"), argStr(args, "title"), argStr(args, "title"), "open"
+			r.Due, r.Desc = argStr(args, "due"), argStr(args, "description")
+		},
+		send:       func(a *App, o *Op, _ sendCtx) (int, error) { return 0, a.executeMsNew(o) },
+		makesTitle: func(o *Op, _ bool) string { return argStr(o.Args, "title") }})
 	msChange := func(name string, apply func(r *msRec, args map[string]any), change func(ch *MilestoneChange, args map[string]any)) {
 		add(&opKind{name: name, family: famMilestone, applyMs: apply, describe: nameOnly, applyEff: noEff, applyLocal: notLocal,
 			send:      func(a *App, o *Op, _ sendCtx) (int, error) { return 0, a.executeMsChange(o, change) },
 			waitTitle: func(o *Op) string { return argStr(o.Args, "title") }})
+	}
+	// a rename only counts when it was queued earlier (so two opposite renames cannot wait on each other)
+	renames := func(o *Op, queuedBefore bool) string {
+		if queuedBefore {
+			return argStr(o.Args, "new_title")
+		}
+		return ""
 	}
 	msChange("ms_close", func(r *msRec, _ map[string]any) { r.State = "closed" },
 		func(ch *MilestoneChange, _ map[string]any) { s := "closed"; ch.State = &s })
@@ -376,6 +391,7 @@ func init() {
 			ch.Description = &d
 		}
 	})
+	opKinds["ms_edit"].makesTitle = renames
 }
 
 // sendNew creates the issue, or finds the one a crashed earlier attempt made (the local-id marker).

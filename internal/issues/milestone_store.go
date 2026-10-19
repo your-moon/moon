@@ -172,12 +172,14 @@ func (a *App) msRecs(short string) []msRec {
 	return recs
 }
 
-// applyMsOp shows one queued milestone write on top of recs.
+// applyMsOp shows one queued milestone write on top of recs. The kind says how: a kind that creates fills a
+// new record, any other changes the record that bears the title the write names.
 func applyMsOp(recs []msRec, op *Op) []msRec {
 	args := op.Args
-	if op.Op == "ms_new" {
-		return append(recs, msRec{LocalID: argStr(args, "local_id"), Title: argStr(args, "title"), key: argStr(args, "title"), State: "open",
-			Due: argStr(args, "due"), Desc: argStr(args, "description"), Updated: op.TS, pending: true})
+	if k := kindOrNil(op.Op); k != nil && k.creates {
+		r := msRec{Updated: op.TS, pending: true}
+		k.applyMs(&r, args)
+		return append(recs, r)
 	}
 	for i := range recs {
 		r := &recs[i]

@@ -319,7 +319,7 @@ func (a *App) cmdNew(o *Opts) error {
 		a.printf("ref %s#%d  (#%d)\n", repo, n, n)
 		return nil
 	}
-	seq, err := a.nextLocalSeq(repo)
+	seq, err := a.nextLocalID(repo, famIssue)
 	if err != nil {
 		return err
 	}
