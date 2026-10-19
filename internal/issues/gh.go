@@ -64,6 +64,9 @@ func (g ExecGH) Run(args []string, stdin string, timeout time.Duration) (string,
 			}
 			m = fmt.Sprintf("gh exit %d", code)
 		}
+		if len(args) > 1 && args[0] == "api" && args[1] == "graphql" { // the JSON body says which part failed
+			return so.String(), &GhError{Msg: m}
+		}
 		return "", &GhError{Msg: m}
 	}
 	return so.String(), nil

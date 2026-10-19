@@ -32,7 +32,7 @@ func TestRenderParseRoundTrip(t *testing.T) {
 	eq(t, "title", hStr(h, "title"), "widget: renders \"blank\" ünïcode\ttab")
 	eq(t, "labels", strings.Join(hList(h, "labels"), ","), "bug,area::ui")
 	a := e.app()
-	if err := a.rebuildIndex("app", nil); err != nil {
+	if err := a.rebuildIndex("app", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	eq(t, "index", e.read("app/index.tsv"), "7\topen\t\tbug,area::ui\t2026-02-01T00:00:00Z\twidget: renders \"blank\" ünïcode tab\n")
@@ -373,7 +373,7 @@ func TestPullWithFakeGitHub(t *testing.T) {
 	e.gh.handler = func(args []string, stdin string) (string, error) {
 		var req struct{ Query string }
 		json.Unmarshal([]byte(stdin), &req)
-		if strings.Contains(req.Query, "pullRequests(") {
+		if strings.Contains(req.Query, "pullRequests(") && !strings.Contains(req.Query, "issues(") {
 			return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
 				"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{pr}}}}}), nil
 		}

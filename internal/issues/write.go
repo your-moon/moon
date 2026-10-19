@@ -300,14 +300,67 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 	type done struct {
 		op *Op
 		sent
+		last bool // the last result of its job: the job's worker slot is free
 	}
 	results := make(chan done)
-	running := 0
+	ids := newIDCache()
+	running, jobs := 0, 0 // writes in flight; workers busy (a batch is one worker)
 	for {
 		// keep the pool full: start every write that may go now
-		for _, op := range nextBatch(a.loadOutbox(), badRefs, tried, busy, repoFilter, onlyRef, pushWorkers-running) {
+		limit := pushWorkers - jobs
+		if pushBatch > 1 && jobs < pushWorkers {
+			limit = pushBatch
+		}
+		ready := nextBatch(a.loadOutbox(), badRefs, tried, busy, repoFilter, onlyRef, limit)
+		if pushBatch > 1 {
+			groups := map[string][]*Op{}
+			var order []string
+			for _, op := range ready {
+				if a.batchable(op) {
+					sh := shortOf(op.Ref)
+					if groups[sh] == nil {
+						order = append(order, sh)
+					}
+					groups[sh] = append(groups[sh], op)
+				}
+			}
+			ready2 := ready[:0:0]
+			for _, op := range ready {
+				if g := groups[shortOf(op.Ref)]; a.batchable(op) && len(g) >= minBatch {
+					continue
+				}
+				ready2 = append(ready2, op)
+			}
+			for _, sh := range order {
+				g := groups[sh]
+				if len(g) < minBatch {
+					continue
+				}
+				for _, op := range g {
+					tried[op.OpID], busy[orderKey(op)] = true, true
+					if op.Op == "comment" {
+						op.Inflight = true
+						a.saveOp(op) // a lost answer must make the retry look for the comment first
+						op.Inflight = false
+					}
+				}
+				running += len(g)
+				jobs++
+				go func(sh string, g []*Op) {
+					for i, r := range a.sendBatch(sh, g, ids) {
+						results <- done{g[i], r, i == len(g)-1}
+					}
+				}(sh, g)
+			}
+			ready = ready2
+		}
+		for _, op := range ready {
+			if jobs >= pushWorkers {
+				break
+			}
 			tried[op.OpID], busy[orderKey(op)] = true, true
 			running++
+			jobs++
 			go func() {
 				if op.Op == "comment" && !op.Inflight {
 					op.Inflight = true
@@ -315,7 +368,7 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 					op.Inflight = false // first attempt: no marker lookup needed
 				}
 				num, err := a.execute(op)
-				results <- done{op, sent{num, err}}
+				results <- done{op, sent{num, err}, true}
 			}()
 		}
 		if running == 0 {
@@ -324,6 +377,9 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 		// results are applied here, one at a time, so the outbox and localmap have a single writer
 		r := <-results
 		running--
+		if r.last {
+			jobs--
+		}
 		delete(busy, orderKey(r.op))
 		op, num, err := r.op, r.num, r.err
 		if err != nil {

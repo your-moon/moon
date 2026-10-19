@@ -57,6 +57,14 @@ func serialPush(t *testing.T) {
 	old := pushWorkers
 	pushWorkers = 1
 	t.Cleanup(func() { pushWorkers = old })
+	restPush(t)
+}
+
+// restPush turns batching off, for tests that fake the per-op REST calls.
+func restPush(t *testing.T) {
+	old := pushBatch
+	pushBatch = 1
+	t.Cleanup(func() { pushBatch = old })
 }
 
 func (f *fakeGH) count(prefix ...string) int {

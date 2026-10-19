@@ -65,6 +65,9 @@ var qIssues = `query($owner:String!,$name:String!,$since:DateTime,$after:String,
  repository(owner:$owner,name:$name){
   labels(first:100) @include(if:$withMs){nodes{name color description}}
   milestones(first:100,states:[OPEN,CLOSED]) @include(if:$withMs){nodes{number title state dueOn description updatedAt}}
+  pullRequests(first:100,orderBy:{field:UPDATED_AT,direction:DESC}) @include(if:$withMs){
+   pageInfo{hasNextPage endCursor}
+   nodes{` + prFields + `}}
   issues(first:100,after:$after,orderBy:{field:UPDATED_AT,direction:ASC},filterBy:{since:$since}){
    pageInfo{hasNextPage endCursor}
    nodes{` + issueFields + `}}}}`
@@ -316,7 +319,9 @@ func clean(s string) string {
 }
 
 // rebuildIndex: one row per file plus the old rows of pruned items. On a full pull, seen drops rows GitHub no longer has.
-func (a *App) rebuildIndex(short string, seen map[int]bool) error {
+//
+// only (a delta pull) limits the header reads to those files and to files the index has no row for; nil reads every file.
+func (a *App) rebuildIndex(short string, seen map[int]bool, only map[int]bool) error {
 	rows := map[int][]string{}
 	for _, r := range a.readIndexRaw(short) {
 		n, err := strconv.Atoi(r[0])
@@ -328,6 +333,11 @@ func (a *App) rebuildIndex(short string, seen map[int]bool) error {
 		}
 	}
 	for _, p := range a.mirrorIssueFiles(short) {
+		if only != nil {
+			if fn, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(p), ".md")); err == nil && !only[fn] && rows[fn] != nil {
+				continue
+			}
+		}
 		h := readHeader(p)
 		if h == nil {
 			continue
@@ -349,7 +359,8 @@ func (a *App) rebuildIndex(short string, seen map[int]bool) error {
 	for _, n := range nums {
 		b.WriteString(strings.Join(rows[n], "\t") + "\n")
 	}
-	return atomicWrite(filepath.Join(a.Home, short, "index.tsv"), b.String(), false)
+	_, err := writeIfChanged(filepath.Join(a.Home, short, "index.tsv"), b.String())
+	return err
 }
 
 // ---------- PR mirror ----------
@@ -434,7 +445,13 @@ func writeIfChanged(p, text string) (bool, error) {
 	return true, atomicWrite(p, text, false)
 }
 
-func (a *App) pullPRs(short string, full bool) (int, error) {
+type prPage struct {
+	PageInfo pageInfo  `json:"pageInfo"`
+	Nodes    []*prNode `json:"nodes"`
+}
+
+// pullPRs mirrors pull requests. first is page one when the issues query already fetched it (nil: ask for it).
+func (a *App) pullPRs(short string, full bool, first *prPage) (int, error) {
 	owner, name, _ := strings.Cut(a.repoFull(short), "/")
 	d := filepath.Join(a.Home, short)
 	if err := os.MkdirAll(filepath.Join(d, "pr"), 0o755); err != nil {
@@ -452,18 +469,20 @@ func (a *App) pullPRs(short string, full bool) (int, error) {
 	var after any
 	maxu, changed, stop := cursor, 0, false
 	for !stop {
-		var data struct {
-			Repository struct {
-				PullRequests struct {
-					PageInfo pageInfo  `json:"pageInfo"`
-					Nodes    []*prNode `json:"nodes"`
-				} `json:"pullRequests"`
-			} `json:"repository"`
+		var page prPage
+		if first != nil {
+			page, first = *first, nil
+		} else {
+			var data struct {
+				Repository struct {
+					PullRequests prPage `json:"pullRequests"`
+				} `json:"repository"`
+			}
+			if err := a.gql(qPRs, map[string]any{"owner": owner, "name": name, "after": after}, &data); err != nil {
+				return changed, err
+			}
+			page = data.Repository.PullRequests
 		}
-		if err := a.gql(qPRs, map[string]any{"owner": owner, "name": name, "after": after}, &data); err != nil {
-			return changed, err
-		}
-		page := data.Repository.PullRequests
 		var batch []*prNode
 		for _, n := range page.Nodes {
 			if !full && n.UpdatedAt < cursor { // M_prcursor
@@ -500,11 +519,12 @@ func (a *App) pullPRs(short string, full bool) (int, error) {
 			for _, k := range nums {
 				b.WriteString(rows[k].tsv())
 			}
-			if err := atomicWrite(filepath.Join(d, "prs.tsv"), b.String(), false); err != nil {
+			if _, err := writeIfChanged(filepath.Join(d, "prs.tsv"), b.String()); err != nil {
 				return err
 			}
 			if maxu != "" {
-				return atomicWrite(cpath, maxu+"\n", false)
+				_, err := writeIfChanged(cpath, maxu+"\n")
+				return err
 			}
 			return nil
 		})
@@ -574,8 +594,8 @@ func (a *App) pull(short string, full bool) (int, error) {
 	if s, err := readText(cpath); err == nil {
 		cursor = pyStrip(s)
 	}
-	if cursor == "" {
-		full = true
+	if _, err := os.Stat(filepath.Join(d, "lastpull")); cursor == "" || err != nil {
+		full = true // no earlier pull to be a delta of
 	}
 	var since any
 	if !full {
@@ -584,6 +604,8 @@ func (a *App) pull(short string, full bool) (int, error) {
 	var after any
 	first, maxu, changed := true, cursor, 0
 	seen := map[int]bool{}
+	touched := map[int]bool{} // files this pull wrote: the only index rows a delta has to re-read
+	var prFirst *prPage
 	for {
 		var data struct {
 			Repository struct {
@@ -608,6 +630,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 					PageInfo pageInfo     `json:"pageInfo"`
 					Nodes    []*issueNode `json:"nodes"`
 				} `json:"issues"`
+				PullRequests *prPage `json:"pullRequests"`
 			} `json:"repository"`
 		}
 		vars := map[string]any{"owner": owner, "name": name, "since": since, "after": after, "withMs": first}
@@ -642,6 +665,9 @@ func (a *App) pull(short string, full bool) (int, error) {
 				return changed, err
 			}
 		}
+		if first {
+			prFirst = data.Repository.PullRequests
+		}
 		first = false
 		page := data.Repository.Issues
 		type rendered struct {
@@ -663,6 +689,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 				}
 				if ch {
 					changed++
+					touched[r.num] = true
 				}
 				seen[r.num] = true
 				if maxu == "" || r.upd > maxu {
@@ -670,7 +697,8 @@ func (a *App) pull(short string, full bool) (int, error) {
 				}
 			}
 			if maxu != "" {
-				return atomicWrite(cpath, maxu+"\n", false)
+				_, err := writeIfChanged(cpath, maxu+"\n")
+				return err
 			}
 			return nil
 		})
@@ -682,7 +710,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 		}
 		after = page.PageInfo.EndCursor
 	}
-	if _, err := a.pullPRs(short, wantFull); err != nil {
+	if _, err := a.pullPRs(short, wantFull, prFirst); err != nil {
 		return changed, err
 	}
 	err := a.withLock(".pull.lock", func() error {
@@ -698,7 +726,11 @@ func (a *App) pull(short string, full bool) (int, error) {
 		if full {
 			sn = seen
 		}
-		if err := a.rebuildIndex(short, sn); err != nil {
+		var only map[int]bool
+		if !full {
+			only = touched
+		}
+		if err := a.rebuildIndex(short, sn, only); err != nil {
 			return err
 		}
 		a.pruneFiles(short)

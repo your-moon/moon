@@ -65,7 +65,7 @@ func seedIssueBody(e *env, n int, state, body string) {
 }
 
 func reindex(e *env) {
-	if err := e.app().rebuildIndex("app", nil); err != nil {
+	if err := e.app().rebuildIndex("app", nil, nil); err != nil {
 		e.t.Fatal(err)
 	}
 }
