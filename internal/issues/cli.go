@@ -80,6 +80,7 @@ func commands() map[string]*spec {
 			npos: 1, run: (*App).cmdMsNew},
 		"milestones edit": {fls: one(repoFl(), fl{name: "title", kind: 's'}, fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'},
 			fl{name: "description-file", kind: 's'}), npos: 1, run: (*App).cmdMsEdit},
+		"labels new":        {fls: one(repoFl(), fl{name: "color", kind: 's'}, fl{name: "description", kind: 's'}), npos: 1, run: (*App).cmdLabelNew},
 		"milestones close":  {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_close")(o) }},
 		"milestones reopen": {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_reopen")(o) }},
 		"prs": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "merged", "closed", "all"}, def: "open"},
@@ -418,8 +419,14 @@ func Main(args []string, e Env) int {
 		if name == "pr" {
 			name = "pr show"
 		}
+		if name == "labels" {
+			name = "labels new"
+		}
 		if name == "milestones" && len(rest) > 2 && isMsSub(rest[2]) {
 			name = "milestones " + rest[2]
+		}
+		if name == "labels" && len(rest) > 2 && isLabelSub(rest[2]) {
+			name = "labels " + rest[2]
 		}
 		if name == "outbox" {
 			name = "outbox ls"
@@ -445,6 +452,9 @@ func Main(args []string, e Env) int {
 	rest = rest[1:]
 	if name == "milestones" && len(rest) > 0 && isMsSub(rest[0]) {
 		name, rest = "milestones "+rest[0], rest[1:]
+	}
+	if name == "labels" && len(rest) > 0 && isLabelSub(rest[0]) {
+		name, rest = "labels "+rest[0], rest[1:]
 	}
 	if name == "outbox" {
 		sub := "ls" // bare `outbox`, or only flags, lists

@@ -49,7 +49,7 @@ func closeLabels(want string, names []string) []string {
 
 // checkLabels refuses labels that do not exist on GitHub, using the mirrored labels.tsv, so a typo fails here
 // instead of leaving a write stuck in the outbox that `sync` can never send. A label that differs from a real
-// one only in case is rewritten to GitHub's spelling. moon never creates labels. When the repo's labels are
+// one only in case is rewritten to GitHub's spelling. moon creates one only on request (`labels new`). When the repo's labels are
 // unknown (local-only repo, never pulled, or a list that may be cut off) nothing is checked.
 func (a *App) checkLabels(short string, labels []string) ([]string, error) {
 	if len(labels) == 0 || a.localOnly(short) {
@@ -59,6 +59,7 @@ func (a *App) checkLabels(short string, labels []string) ([]string, error) {
 	if !ok {
 		return labels, nil
 	}
+	names = append(names, a.queuedLabels(short)...) // a label being created counts as existing
 	out := make([]string, 0, len(labels))
 	var bad []string
 	for _, l := range labels {
@@ -74,7 +75,7 @@ func (a *App) checkLabels(short string, labels []string) ([]string, error) {
 	}
 	if len(bad) > 0 {
 		sort.Strings(bad)
-		return nil, die("%s has no such label, nothing was queued (moon does not create labels; add it on GitHub, then `moon issues pull`):\n%s", short, strings.Join(bad, "\n"))
+		return nil, die("%s has no such label, nothing was queued (create it with `moon issues labels new <name>`, or fix the typo):\n%s", short, strings.Join(bad, "\n"))
 	}
 	return out, nil
 }

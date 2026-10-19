@@ -288,7 +288,7 @@ func TestHelp(t *testing.T) {
 	for name := range commands() {
 		words := strings.Fields(name)
 		for _, form := range [][]string{append(append([]string{}, words...), "--help"), append(append([]string{}, words...), "-h"), append([]string{"help"}, words[0])} {
-			if name == "pr show" && form[0] == "help" {
+			if (name == "pr show" || name == "labels new") && form[0] == "help" {
 				continue // `help pr` maps to pr show below
 			}
 			out, errs, code := e.run(form...)

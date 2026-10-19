@@ -211,6 +211,8 @@ func describe(o *Op) string {
 		return "label +" + strings.Join(argList(o.Args, "add"), ",") + " -" + strings.Join(argList(o.Args, "remove"), ",")
 	case "milestone":
 		return "milestone -> " + argStr(o.Args, "title")
+	case "label_new":
+		return "create label " + argStr(o.Args, "name")
 	case "edit":
 		var p []string
 		for _, x := range []string{"title", "body"} {

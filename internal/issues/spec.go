@@ -36,7 +36,7 @@ type CmdInfo struct {
 var posKinds = map[string][]string{
 	"show": {"ref"}, "pr show": {"ref"}, "claim": {"ref"}, "release": {"ref"}, "comment": {"ref"}, "close": {"ref"},
 	"reopen": {"ref"}, "label": {"ref"}, "edit": {"ref"}, "milestone": {"ref", "milestone"}, "milestones show": {"milestone"},
-	"milestones new": {"text"}, "milestones edit": {"milestone"}, "milestones close": {"milestone"}, "milestones reopen": {"milestone"},
+	"milestones new": {"text"}, "labels new": {"text"}, "milestones edit": {"milestone"}, "milestones close": {"milestone"}, "milestones reopen": {"milestone"},
 	"outbox drop": {"op"}, "outbox edit": {"op"},
 }
 

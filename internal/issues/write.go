@@ -102,6 +102,9 @@ func (a *App) execute(op *Op) (int, error) {
 	if isMsOp(op.Op) {
 		return 0, a.executeMs(op)
 	}
+	if op.Op == "label_new" {
+		return 0, a.executeLabelNew(op)
+	}
 	short, ident, err := a.parseRef(op.Ref)
 	if err != nil {
 		return 0, err
@@ -256,7 +259,7 @@ func nextBatch(all []*Op, badRefs, tried, busy map[string]bool, repoFilter, only
 			continue
 		}
 		seen[k] = true
-		if msWaiting(all, i) {
+		if msWaiting(all, i) || labelWaiting(all, i) {
 			continue
 		}
 		batch = append(batch, o)
