@@ -376,6 +376,49 @@ func (a *App) labelArgs(o *Opts) (map[string]any, error) {
 	return map[string]any{"add": toAny(add), "remove": toAny(rm)}, nil
 }
 
+// opResult is what a queued write reports: the op id, the ref it landed on, and (close only) what happened to the agent's claim.
+type opResult struct {
+	OpID, Ref, Claim string
+}
+
+func (r opResult) line() string {
+	extra := ""
+	if r.Claim != "" {
+		extra = "  claim: " + r.Claim
+	}
+	return fmt.Sprintf("op %s  ref %s%s\n", r.OpID, r.Ref, extra)
+}
+
+// queueOp applies one write op to ref: straight to the file for a local-only repo, else onto the outbox.
+func (a *App) queueOp(kind, ref string, args map[string]any) (opResult, error) {
+	if short, _, perr := a.parseRef(ref); perr == nil && a.localOnly(short) {
+		if err := a.applyLocalOnly(kind, ref, args); err != nil {
+			return opResult{}, err
+		}
+		return opResult{OpID: "local", Ref: ref}, nil
+	}
+	opID, r, err := a.enqueue(kind, ref, args)
+	if err != nil {
+		return opResult{}, err
+	}
+	return opResult{OpID: opID, Ref: r}, nil
+}
+
+// closeIssue queues a close with reason and optional comment, then drops agent's claim on the issue
+// (any claim when the caller named no agent: noAgent), as `moon issues close` does.
+func (a *App) closeIssue(ref, reason, comment, agent string, noAgent bool) (opResult, error) {
+	args := map[string]any{"reason": reason}
+	if comment != "" {
+		args["comment"] = comment
+	}
+	r, err := a.queueOp("close", ref, args)
+	if err != nil {
+		return r, err
+	}
+	r.Claim = a.releaseClaim(r.Ref, agent, noAgent)
+	return r, nil
+}
+
 func (a *App) cmdSimple(kind string) func(o *Opts) error {
 	return func(o *Opts) error {
 		args := map[string]any{}
@@ -390,10 +433,12 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			}
 			args["body"] = b
 		case "close":
-			args["reason"] = o.str("reason")
-			if c := o.str("comment"); c != "" {
-				args["comment"] = c
+			r, err := a.closeIssue(o.Pos[0], o.str("reason"), o.str("comment"), o.str("agent"), !o.Seen["agent"])
+			if err != nil {
+				return err
 			}
+			a.printf("%s", r.line())
+			return nil
 		case "label":
 			la, err := a.labelArgs(o)
 			if err != nil {
@@ -426,26 +471,11 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 				return die("edit needs --title, --body and/or --depends-on")
 			}
 		}
-		var opID, ref string
-		if short, _, perr := a.parseRef(o.Pos[0]); perr == nil && a.localOnly(short) {
-			if err := a.applyLocalOnly(kind, o.Pos[0], args); err != nil {
-				return err
-			}
-			opID, ref = "local", o.Pos[0]
-		} else {
-			var err error
-			opID, ref, err = a.enqueue(kind, o.Pos[0], args)
-			if err != nil {
-				return err
-			}
+		r, err := a.queueOp(kind, o.Pos[0], args)
+		if err != nil {
+			return err
 		}
-		extra := ""
-		if kind == "close" {
-			ag := o.str("agent")
-			r := a.releaseClaim(ref, ag, !o.Seen["agent"])
-			extra = "  claim: " + r
-		}
-		a.printf("op %s  ref %s%s\n", opID, ref, extra)
+		a.printf("%s", r.line())
 		return nil
 	}
 }

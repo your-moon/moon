@@ -355,8 +355,7 @@ func (s *Session) Release(ref, agent string) (string, error) {
 
 // Close queues a close (releasing the agent's own claim, as the CLI does with --agent).
 func (s *Session) Close(ref, agent string) error {
-	o := newOpts([]string{ref}, "reason", "completed", "agent", agent)
-	_, err := s.run(func(a *App) error { return a.cmdSimple("close")(o) })
+	_, err := s.app.closeIssue(ref, "completed", "", agent, false)
 	return err
 }
 
