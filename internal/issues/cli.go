@@ -1,6 +1,7 @@
 package issues
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -640,6 +641,9 @@ func spawnSync(a *App) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
+	}
+	if strings.HasSuffix(self, ".test") { // a go test binary would re-run its tests detached, and those spawn again
+		return errors.New("background sync: not from a test binary")
 	}
 	log, err := os.OpenFile(filepath.Join(a.Home, "autosync.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {

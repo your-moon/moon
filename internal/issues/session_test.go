@@ -1,6 +1,8 @@
 package issues
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -90,4 +92,21 @@ func TestSessionMissingMirror(t *testing.T) {
 	if _, err := s.Detail("app#9"); err == nil {
 		t.Fatal("want an error, not a panic")
 	}
+}
+
+func TestSessionWriteKicksBackgroundPush(t *testing.T) {
+	e := newEnv(t)
+	e.write("app/index.tsv", "3\topen\t\t\t2026-02-03T00:00:00Z\tThird thing\n")
+	spawn := filepath.Join(t.TempDir(), "spawn.log")
+	e.extra["ISSUES_NO_AUTOSYNC"] = ""
+	e.extra["ISSUES_TEST_SPAWN"] = spawn
+	s, err := NewSession(e.cfg, "", Env{Getenv: func(k string) string { return e.extra[k] }, Cwd: "/", Now: func() time.Time { return e.now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Comment("app#3", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(spawn)
+	eq(t, "tui write spawns", string(b), "spawn\n")
 }
