@@ -346,7 +346,7 @@ func TestPullWritesLabelColors(t *testing.T) {
 	e.gh.handler = func(args []string, stdin string) (string, error) {
 		var req struct{ Query string }
 		json.Unmarshal([]byte(stdin), &req)
-		if strings.Contains(req.Query, "pullRequests(") {
+		if strings.Contains(req.Query, "pullRequests(") && !strings.Contains(req.Query, "issues(") {
 			return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
 				"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{}}}}}), nil
 		}

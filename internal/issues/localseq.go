@@ -122,7 +122,7 @@ func (a *App) newLocalOnly(short, title, body string, labels []string, milestone
 		if err := atomicWrite(a.issuePath(short, n), renderIssue(node), false); err != nil {
 			return err
 		}
-		return a.rebuildIndex(short, nil)
+		return a.rebuildIndex(short, nil, nil)
 	})
 	return n, err
 }
@@ -250,6 +250,6 @@ func (a *App) applyLocalOnly(kind, ref string, args map[string]any) error {
 		if err := atomicWrite(path, renderIssue(node)+comments, false); err != nil {
 			return err
 		}
-		return a.rebuildIndex(short, nil)
+		return a.rebuildIndex(short, nil, nil)
 	})
 }

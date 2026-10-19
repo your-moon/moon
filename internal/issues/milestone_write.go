@@ -334,7 +334,7 @@ func (a *App) renameMsInMirror(short, old, new string) error {
 			return err
 		}
 	}
-	return a.rebuildIndex(short, nil)
+	return a.rebuildIndex(short, nil, nil)
 }
 
 // msIssueTitle resolves the <title> of `milestone <ref> <title>`: M-<n> becomes the milestone's title.

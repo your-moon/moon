@@ -23,7 +23,7 @@ func showJSONOf(t *testing.T, e *env, ref string) map[string]any {
 
 func seedIssue7(e *env) {
 	e.write("app/7.md", renderIssue(fixtureIssue()))
-	if err := e.app().rebuildIndex("app", nil); err != nil {
+	if err := e.app().rebuildIndex("app", nil, nil); err != nil {
 		e.t.Fatal(err)
 	}
 }

@@ -141,7 +141,7 @@ func (h *hub) handle(args []string, stdin string) (string, error) {
 	if len(args) >= 2 && args[0] == "api" && args[1] == "graphql" {
 		var q struct{ Query string }
 		json.Unmarshal([]byte(stdin), &q)
-		if strings.Contains(q.Query, "pullRequests") {
+		if strings.Contains(q.Query, "pullRequests") && !strings.Contains(q.Query, "issues(") {
 			return `{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}`, nil
 		}
 		var nodes []any

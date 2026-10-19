@@ -77,7 +77,7 @@ var helpTexts = map[string]helpEntry{
 		[2]string{"moon issues outbox drop 3f9a21c0", "moon issues outbox drop 3f9a21c0 --cascade   # also drop the writes queued on that new issue"}},
 	"push": {"send queued writes to GitHub", "moon issues push [--repo R]",
 		[2]string{"moon issues push", "moon issues push -R app"}},
-	"pull": {"refresh the mirror from GitHub", "moon issues pull [--repo R] [--full]",
+	"pull": {"refresh the mirror from GitHub: only what changed since the last pull (one request); --full re-reads everything and also drops deleted or transferred issues, which a delta cannot see", "moon issues pull [--repo R] [--full]",
 		[2]string{"moon issues pull", "moon issues pull -R app --full"}},
 	"sync": {"push, then pull", "moon issues sync [--repo R] [--quiet]",
 		[2]string{"moon issues sync", "moon issues sync -R app --quiet"}},
