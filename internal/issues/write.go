@@ -2,6 +2,7 @@ package issues
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -586,12 +587,9 @@ func parseTTL(t string) (int, error) {
 }
 
 func (a *App) cmdClaim(o *Opts) error {
-	ref, agent := o.Pos[0], o.str("agent")
-	if _, _, err := a.parseRef(ref); err != nil {
+	if _, _, err := a.parseRef(o.Pos[0]); err != nil { // a bad ref is reported before a bad --ttl
 		return err
 	}
-	os.MkdirAll(a.claimsDir(), 0o755)
-	path, _ := a.claimPath(ref)
 	ttlStr := o.str("ttl")
 	if ttlStr == "" {
 		ttlStr = "120m"
@@ -604,18 +602,32 @@ func (a *App) cmdClaim(o *Opts) error {
 		return err
 	}
 	pid, _ := strconv.Atoi(o.str("pid"))
-	mine := &Claim{agent, pid, a.Host, a.nowEpoch(), float64(ttl)}
-	body := mine.marshal()
-	taken := func(format string, args ...any) error {
-		a.printf(format+"\n", args...)
+	msg, err := a.claim(o.Pos[0], o.str("agent"), ttl, pid)
+	if msg != "" {
+		a.printf("%s\n", msg)
+	}
+	if errors.Is(err, ErrHeld) {
 		return &exitError{Code: 3}
 	}
+	return err
+}
+
+// claim takes (or renews, or takes over a stale) claim on ref for agent and returns the one line
+// `moon issues claim` prints. A claim held by someone else comes back as ErrHeld together with the
+// line saying who holds it; it is never forced. ttl is in seconds.
+func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
+	if _, _, err := a.parseRef(ref); err != nil {
+		return "", err
+	}
+	os.MkdirAll(a.claimsDir(), 0o755)
+	path, _ := a.claimPath(ref)
+	mine := &Claim{agent, pid, a.Host, a.nowEpoch(), float64(ttl)}
+	body := mine.marshal()
 	for {
 		if err := createExcl(path, body+"\n"); err == nil { // M_excl
-			a.printf("claimed %s for %s\n", ref, agent)
-			return nil
+			return fmt.Sprintf("claimed %s for %s", ref, agent), nil
 		} else if !os.IsExist(err) {
-			return err
+			return "", err
 		}
 		cur := a.readClaim(path)
 		if cur == nil {
@@ -623,28 +635,26 @@ func (a *App) cmdClaim(o *Opts) error {
 		}
 		if cur.Agent == agent && !a.claimIsStale(cur) {
 			atomicWrite(path, body+"\n", false)
-			a.printf("renewed claim on %s for %s\n", ref, agent)
-			return nil
+			return fmt.Sprintf("renewed claim on %s for %s", ref, agent), nil
 		}
 		if !a.claimIsStale(cur) {
-			return taken("%s", a.heldMsg(ref, cur))
+			return a.heldMsg(ref, cur), ErrHeld
 		}
 		// stale: exactly one taker wins the rename, then races everyone else on O_EXCL
 		gone := path + ".stale." + strings.ReplaceAll(uuid4(), "-", "")
 		if err := os.Rename(path, gone); err != nil {
-			return taken("TAKEN %s was just taken over by someone else", ref)
+			return fmt.Sprintf("TAKEN %s was just taken over by someone else", ref), ErrHeld
 		}
 		moved := a.readClaim(gone)
 		os.Remove(gone)
 		if moved != nil && !a.claimIsStale(moved) { // we renamed a fresh claim that replaced the stale one
 			createExcl(path, moved.marshal()+"\n")
-			return taken("%s", a.heldMsg(ref, moved))
+			return a.heldMsg(ref, moved), ErrHeld
 		}
 		if err := createExcl(path, body+"\n"); err != nil {
-			return taken("TAKEN %s was just taken by someone else", ref)
+			return fmt.Sprintf("TAKEN %s was just taken by someone else", ref), ErrHeld
 		}
-		a.printf("took over stale claim on %s (was %s); now held by %s\n", ref, a.holderText(cur), agent)
-		return nil
+		return fmt.Sprintf("took over stale claim on %s (was %s); now held by %s", ref, a.holderText(cur), agent), nil
 	}
 }
 
@@ -653,13 +663,26 @@ func (a *App) cmdRelease(o *Opts) error {
 	if !force && agent == "" {
 		return die("release needs --agent NAME (you must be the holder) or --force")
 	}
-	if _, _, err := a.parseRef(o.Pos[0]); err != nil {
-		return err
+	msg, err := a.release(o.Pos[0], agent, force)
+	if msg != "" {
+		a.printf("%s\n", msg)
 	}
-	r := a.releaseClaim(o.Pos[0], agent, force)
-	a.printf("%s: %s\n", o.Pos[0], r)
+	if errors.Is(err, ErrHeld) {
+		return &exitError{Code: 3}
+	}
+	return err
+}
+
+// release drops agent's claim on ref (any claim with force) and returns the line `moon issues
+// release` prints. Someone else's claim comes back as ErrHeld together with that line.
+func (a *App) release(ref, agent string, force bool) (string, error) {
+	if _, _, err := a.parseRef(ref); err != nil {
+		return "", err
+	}
+	r := a.releaseClaim(ref, agent, force)
+	msg := ref + ": " + r
 	if r == "released" || r == "none" {
-		return nil
+		return msg, nil
 	}
-	return &exitError{Code: 3}
+	return msg, ErrHeld
 }

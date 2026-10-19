@@ -341,26 +341,16 @@ func newOpts(pos []string, kv ...string) *Opts {
 	return o
 }
 
-// Claim takes a claim through the same code as `moon issues claim`. A claim held by another agent returns ErrHeld, never forced.
+// Claim takes a claim like `moon issues claim` with a 120m lease. A claim held by another agent returns ErrHeld, never forced.
 func (s *Session) Claim(ref, agent string) (string, error) {
-	o := newOpts([]string{ref}, "agent", agent, "ttl", "120m", "pid", "0")
-	msg, err := s.run(func(a *App) error { return a.cmdClaim(o) })
-	var ee *exitError
-	if errors.As(err, &ee) && ee.Code == 3 {
-		return msg, ErrHeld
-	}
-	return msg, err
+	msg, err := s.app.claim(ref, agent, 120*60, 0)
+	return strings.TrimSpace(msg), err
 }
 
 // Release drops the agent's own claim; someone else's claim returns ErrHeld. Never forced.
 func (s *Session) Release(ref, agent string) (string, error) {
-	o := newOpts([]string{ref}, "agent", agent)
-	msg, err := s.run(func(a *App) error { return a.cmdRelease(o) })
-	var ee *exitError
-	if errors.As(err, &ee) && ee.Code == 3 {
-		return msg, ErrHeld
-	}
-	return msg, err
+	msg, err := s.app.release(ref, agent, false)
+	return strings.TrimSpace(msg), err
 }
 
 // Close queues a close (releasing the agent's own claim, as the CLI does with --agent).
