@@ -659,10 +659,7 @@ func (a *App) cmdClaim(o *Opts) error {
 	}
 	ttlStr := o.str("ttl")
 	if ttlStr == "" {
-		ttlStr = "120m"
-		if a.Cfg != nil && a.Cfg.ClaimTTL != "" {
-			ttlStr = a.Cfg.ClaimTTL
-		}
+		ttlStr = a.claimTTLString()
 	}
 	ttl, err := parseTTL(ttlStr)
 	if err != nil {
@@ -752,4 +749,20 @@ func (a *App) release(ref, agent string, force bool) (string, error) {
 		return msg, nil
 	}
 	return msg, ErrHeld
+}
+
+// claimTTLString is the configured claim lease (claim_ttl), 120m by default.
+func (a *App) claimTTLString() string {
+	if a.Cfg != nil && a.Cfg.ClaimTTL != "" {
+		return a.Cfg.ClaimTTL
+	}
+	return "120m"
+}
+
+// claimTTL is the lease in seconds for claims that take no --ttl: the CLI default and the TUI claim action.
+func (a *App) claimTTL() int {
+	if n, err := parseTTL(a.claimTTLString()); err == nil {
+		return n
+	}
+	return 120 * 60
 }

@@ -37,7 +37,7 @@ var actions = []Action{
 		// open, and not held live by someone else: unclaimed, stale, or this agent's own (renew)
 		allow: func(it Item, agent string) bool { return it.State == "open" && HeldByOther(it, agent) == nil },
 		run: func(s *Session, ref, agent string, _ []string) (string, error) {
-			msg, err := s.app.claim(ref, agent, 120*60, 0)
+			msg, err := s.app.claim(ref, agent, s.app.claimTTL(), 0)
 			return strings.TrimSpace(msg), err
 		},
 	},

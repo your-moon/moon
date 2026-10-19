@@ -3,7 +3,6 @@ package issues
 import (
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -91,21 +90,18 @@ func NewSessionScoped(cfgPath, dir string, e Env, opt ScopeOpts) (*Session, erro
 	if dir != "" {
 		home, _ = filepath.Abs(dir)
 	}
-	host, _ := os.Hostname()
-	now := e.Now
-	if now == nil {
-		now = time.Now
+	if e.Now == nil {
+		e.Now = time.Now
 	}
-	a := &App{Home: home, GH: NewExecGH(""), Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
-		Environ: e.Getenv, Repos: cfg.Repos, SpawnSync: spawnSync}
-	git := e.GitRemote
-	if git == nil {
-		git = GitRemoteOrigin
-	}
+	e.Out, e.Err, e.Stdin = io.Discard, io.Discard, strings.NewReader("")
+	a := newApp(cfg, p, home, e)
+	remote := a.GitRemote
 	if opt.Home == "" {
 		opt.Home = e.Getenv("HOME")
 	}
-	return &Session{app: a, created: map[string]string{}, scope: ResolveScope(e.Cwd, cfg, git, opt), pal: NewPalette(DetectTheme(e.Getenv, cfg.Colors.Theme), cfg.Colors.Overrides)}, nil
+	scope := ResolveScope(e.Cwd, cfg, remote, opt)
+	a.Scope = scope
+	return &Session{app: a, created: map[string]string{}, scope: scope, pal: NewPalette(DetectTheme(e.Getenv, cfg.Colors.Theme), cfg.Colors.Overrides)}, nil
 }
 
 // Scope is the repos the dashboard opens on: the project the working directory belongs to, or every repo.
