@@ -302,6 +302,9 @@ type Op struct {
 	Attempts  int
 	LastError *string
 	Inflight  bool
+	// Permanent: GitHub said a retry cannot succeed (issues disabled, repo archived or gone); push skips the
+	// op until `outbox retry` or `outbox edit` clears it.
+	Permanent bool
 	File      string
 }
 
@@ -334,6 +337,9 @@ func (o *Op) marshal() string {
 	if o.Inflight {
 		ob = append(ob, KV{"inflight", true})
 	}
+	if o.Permanent {
+		ob = append(ob, KV{"permanent", true})
+	}
 	return dumps(ob, false) + "\n"
 }
 
@@ -349,6 +355,7 @@ func parseOp(data []byte, file string) (*Op, error) {
 		Attempts  float64        `json:"attempts"`
 		LastError *string        `json:"last_error"`
 		Inflight  bool           `json:"inflight"`
+		Permanent bool           `json:"permanent"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
@@ -356,7 +363,7 @@ func parseOp(data []byte, file string) (*Op, error) {
 	if raw.Args == nil {
 		raw.Args = map[string]any{}
 	}
-	return &Op{raw.OpID, raw.TS, raw.Op, raw.Ref, raw.Args, int(raw.Attempts), raw.LastError, raw.Inflight, file}, nil
+	return &Op{raw.OpID, raw.TS, raw.Op, raw.Ref, raw.Args, int(raw.Attempts), raw.LastError, raw.Inflight, raw.Permanent, file}, nil
 }
 
 // loadOutbox returns all pending ops, oldest first. No lock needed.

@@ -46,7 +46,7 @@ func (a *App) cmdOutboxEdit(o *Opts) error {
 		if err != nil {
 			return err
 		}
-		op.Args, op.LastError = args, nil // the old error was about the old fields
+		op.Args, op.LastError, op.Permanent = args, nil, false // the old error was about the old fields
 		if err := a.saveOp(op); err != nil {
 			return err
 		}

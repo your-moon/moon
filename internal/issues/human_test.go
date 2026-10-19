@@ -55,7 +55,7 @@ func TestPipedOutputUnchanged(t *testing.T) {
 		"frontier":   {[]string{"frontier", "--repo", "lib"}, "lib#3\topen\t-\tkind:bug\tparser: crashes on empty input\n"},
 		"milestones": {[]string{"milestones", "--repo", "app"}, "app\tv1.0\topen\t3\t4\t2026-04-01T00:00:00Z\napp\tv0.9\tclosed\t10\t0\t\n"},
 		"prs":        {[]string{"prs", "--state", "all"}, "app#31\topen\tfix-login\tlogin: handle expired cookie\napp#30\tmerged\tcsv-export\texport: CSV download\napp#29\topen [draft]\twip-search\tsearch: index tuning\n"},
-		"status":     {[]string{"status"}, "outbox=0 errors=0\napp: last pull 0s ago, issues=5\nlib: last pull 0s ago, issues=1\n"},
+		"status":     {[]string{"status"}, "outbox=0 errors=0\nautosync: off (ISSUES_NO_AUTOSYNC)\napp: last pull 0s ago, issues=5\nlib: last pull 0s ago, issues=1\n"},
 		"empty":      {[]string{"ls", "--repo", "app", "--label", "nope"}, "\n"},
 	} {
 		out, errs, code := e.run(c.args...)
@@ -288,7 +288,7 @@ func TestHelp(t *testing.T) {
 	for name := range commands() {
 		words := strings.Fields(name)
 		for _, form := range [][]string{append(append([]string{}, words...), "--help"), append(append([]string{}, words...), "-h"), append([]string{"help"}, words[0])} {
-			if name == "pr show" && form[0] == "help" {
+			if (name == "pr show" || name == "labels new") && form[0] == "help" {
 				continue // `help pr` maps to pr show below
 			}
 			out, errs, code := e.run(form...)

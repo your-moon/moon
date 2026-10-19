@@ -81,6 +81,7 @@ func commands() map[string]*spec {
 			npos: 1, run: (*App).cmdMsNew},
 		"milestones edit": {fls: one(repoFl(), fl{name: "title", kind: 's'}, fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'},
 			fl{name: "description-file", kind: 's'}), npos: 1, run: (*App).cmdMsEdit},
+		"labels new":        {fls: one(repoFl(), fl{name: "color", kind: 's'}, fl{name: "description", kind: 's'}), npos: 1, run: (*App).cmdLabelNew},
 		"milestones close":  {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_close")(o) }},
 		"milestones reopen": {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_reopen")(o) }},
 		"prs": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "merged", "closed", "all"}, def: "open"},
@@ -104,13 +105,14 @@ func commands() map[string]*spec {
 		"milestone": {npos: 2, run: func(a *App, o *Opts) error { return a.cmdSimple("milestone")(o) }},
 		"edit": {fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "depends-on", kind: 'a'}, emptyBodyFl()), bodyFls()), npos: 1,
 			run: func(a *App, o *Opts) error { return a.cmdSimple("edit")(o) }},
-		"push":        {fls: one(repoFl()), run: (*App).cmdPush},
-		"pull":        {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
-		"prune":       {fls: one(repoFl()), run: (*App).cmdPrune},
-		"sync":        {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
-		"where":       {run: (*App).cmdWhere},
-		"outbox ls":   {fls: fmtFls(), run: (*App).cmdOutboxLs},
-		"outbox drop": {fls: one(fl{name: "cascade", kind: 'b'}), npos: 1, run: (*App).cmdOutboxDrop},
+		"push":         {fls: one(repoFl()), run: (*App).cmdPush},
+		"pull":         {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
+		"prune":        {fls: one(repoFl()), run: (*App).cmdPrune},
+		"sync":         {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
+		"where":        {run: (*App).cmdWhere},
+		"outbox ls":    {fls: fmtFls(), run: (*App).cmdOutboxLs},
+		"outbox retry": {npos: 1, run: (*App).cmdOutboxRetry},
+		"outbox drop":  {fls: one(fl{name: "cascade", kind: 'b'}), npos: 1, run: (*App).cmdOutboxDrop},
 		"outbox edit": {fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "label", kind: 'a'}, fl{name: "milestone", kind: 's'},
 			fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}, emptyBodyFl()), bodyFls()), npos: 1, run: (*App).cmdOutboxEdit},
 	}
@@ -175,7 +177,10 @@ Projects and scope (moon issues where shows what applies here and why). Commands
   4. the git remote "origin", matched to a repo's github = "owner/name" (case-insensitive)
   5. otherwise every repo. A bare number (585, #585) means that repo; in all-repos mode it must exist in exactly one.
 Refs: <alias>#123, or <alias>#L-<id> for a local issue not pushed yet.
-Aliases come from [repos.<alias>] in moon.toml. Env: ISSUES_NO_AUTOSYNC, ISSUES_KEEP_DAYS, ISSUES_GH, NO_COLOR.
+Autosync: a read of an old mirror starts a background sync (it also sends the queued writes; log: <mirror>/autosync.log).
+  Turn it off: MOON_AUTOSYNC=0 (or ISSUES_NO_AUTOSYNC=1) in the environment, or autosync = false in moon.toml; MOON_AUTOSYNC=1
+  turns it on again over the file. "moon issues status" shows whether it is on and how its last run went. "moon issues sync" runs it by hand.
+Aliases come from [repos.<alias>] in moon.toml. Env: MOON_AUTOSYNC, ISSUES_NO_AUTOSYNC, ISSUES_KEEP_DAYS, ISSUES_GH, NO_COLOR.
 `
 
 // shortMap is the one set of short flags, the same in every command that has the flag. -j and -t are
@@ -419,8 +424,14 @@ func Main(args []string, e Env) int {
 		if name == "pr" {
 			name = "pr show"
 		}
+		if name == "labels" {
+			name = "labels new"
+		}
 		if name == "milestones" && len(rest) > 2 && isMsSub(rest[2]) {
 			name = "milestones " + rest[2]
+		}
+		if name == "labels" && len(rest) > 2 && isLabelSub(rest[2]) {
+			name = "labels " + rest[2]
 		}
 		if name == "outbox" {
 			name = "outbox ls"
@@ -446,6 +457,9 @@ func Main(args []string, e Env) int {
 	rest = rest[1:]
 	if name == "milestones" && len(rest) > 0 && isMsSub(rest[0]) {
 		name, rest = "milestones "+rest[0], rest[1:]
+	}
+	if name == "labels" && len(rest) > 0 && isLabelSub(rest[0]) {
+		name, rest = "labels "+rest[0], rest[1:]
 	}
 	if name == "outbox" {
 		sub := "ls" // bare `outbox`, or only flags, lists
@@ -606,7 +620,7 @@ func (a *App) autosync(name string, o *Opts, cfgPath string) error {
 		a.doSync(shorts, false, a.Err, nil)
 		return nil
 	}
-	if a.Environ("ISSUES_NO_AUTOSYNC") != "" {
+	if off, _ := a.autosyncOff(); off {
 		return nil
 	}
 	age, ok := a.mirrorAge(shorts)
@@ -661,7 +675,7 @@ func spawnSync(a *App) error {
 }
 
 // isOutboxSub: the words that follow `moon issues outbox`.
-func isOutboxSub(w string) bool { return w == "ls" || w == "edit" || w == "drop" }
+func isOutboxSub(w string) bool { return w == "ls" || w == "edit" || w == "drop" || w == "retry" }
 
 // isMsSub: the words that follow `moon issues milestones`.
 func isMsSub(w string) bool {

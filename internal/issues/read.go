@@ -211,6 +211,8 @@ func describe(o *Op) string {
 		return "label +" + strings.Join(argList(o.Args, "add"), ",") + " -" + strings.Join(argList(o.Args, "remove"), ",")
 	case "milestone":
 		return "milestone -> " + argStr(o.Args, "title")
+	case "label_new":
+		return "create label " + argStr(o.Args, "name")
 	case "edit":
 		var p []string
 		for _, x := range []string{"title", "body"} {
@@ -440,13 +442,16 @@ func (a *App) cmdStatus(o *Opts) error {
 				e = append(e, Obj{{"op_id", op.OpID}, {"op", op.Op}, {"ref", op.Ref}, {"attempts", op.Attempts}, {"error", *op.LastError}})
 			}
 		}
-		a.println(dumps(Obj{{"outbox", len(ops)}, {"errors", errs}, {"error_ops", e}, {"repos", rs}}, false))
+		off, why := a.autosyncOff()
+		a.println(dumps(Obj{{"outbox", len(ops)}, {"errors", errs}, {"error_ops", e}, {"repos", rs},
+			{"autosync", Obj{{"on", !off}, {"off_reason", nilIfEmpty(why)}, {"last_run", nilIfEmpty(a.autosyncLast())}}}}, false))
 	case "table":
 		c := a.P("state-open", "0 errors")
 		if errs > 0 {
 			c = a.P("error", fmt.Sprintf("%d errors", errs))
 		}
 		a.printf("outbox: %d queued, %s\n", len(ops), c)
+		a.println(a.autosyncSummary())
 		for _, op := range ops {
 			if op.LastError != nil && *op.LastError != "" {
 				a.println("  " + a.P("error", "ERR") + fmt.Sprintf(" %s %s %s (attempts %d): %s", op.OpID, op.Op, op.Ref, op.Attempts, ellipsize(*op.LastError, max(a.Width-40, 20))))
@@ -463,6 +468,7 @@ func (a *App) cmdStatus(o *Opts) error {
 		}
 	default:
 		a.printf("outbox=%d errors=%d\n", len(ops), errs)
+		a.println(a.autosyncSummary())
 		for _, op := range ops {
 			if op.LastError != nil && *op.LastError != "" {
 				a.printf("  ERR %s %s %s attempts=%d: %s\n", op.OpID, op.Op, op.Ref, op.Attempts, trunc(*op.LastError, 200))

@@ -20,12 +20,13 @@ type Repo struct {
 
 // Config is the parsed moon.toml. Parsed once at the boundary; nothing else reads the file.
 type Config struct {
-	Path      string // absolute path of the moon.toml that was read
-	Dir       string // directory holding moon.toml
-	MirrorDir string // absolute
-	Repos     []Repo // in file order
-	Colors    ColorConfig
-	ClaimTTL  string // claim_ttl = "30m": default lease for `claim` when --ttl is not given; empty means 120m
+	Path       string // absolute path of the moon.toml that was read
+	Dir        string // directory holding moon.toml
+	MirrorDir  string // absolute
+	Repos      []Repo // in file order
+	Colors     ColorConfig
+	NoAutosync bool   // autosync = false: reads never start a background sync
+	ClaimTTL   string // claim_ttl = "30m": default lease for `claim` when --ttl is not given; empty means 120m
 }
 
 var aliasRe = regexp.MustCompile(`^[a-z0-9_]+$`)
@@ -89,6 +90,7 @@ Create one, for example:
 //
 //	mirror_dir = "path"            # optional, default .moon/issues beside moon.toml
 //	claim_ttl = "30m"              # optional, default lease for `claim` (120m when absent)
+//	autosync = false               # optional, true by default: false = reads never sync in the background
 //	[repos.<alias>]
 //	github = "owner/name"         # exactly one of github or local = true
 //	local = true                  # local-only tracker, never synced
@@ -169,6 +171,13 @@ func LoadConfig(path string) (*Config, error) {
 			if err := c.Colors.Set(k, v[1:len(v)-1]); err != nil {
 				return nil, fmt.Errorf("%s:%d: %v", path, n, err)
 			}
+			continue
+		}
+		if cur == nil && k == "autosync" {
+			if v != "true" && v != "false" {
+				return nil, fmt.Errorf("%s:%d: autosync must be true or false (unquoted), got %s", path, n, v)
+			}
+			c.NoAutosync = v == "false"
 			continue
 		}
 		if cur != nil && k == "local" {
