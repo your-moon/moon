@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,7 +11,7 @@ const queuedMs = `{"op_id": "20260301T120000.000000-1-aaaa", "ts": "2026-03-01T1
 // and :milestone accepts its M-<n> id.
 func TestLocalMilestonesInPickerAndLine(t *testing.T) {
 	m, mi := compModel(t, 120, 30)
-	mi.write("outbox/20260301T120000.000000-1-aaaa.json", queuedMs)
+	mi.queueOp("20260301T120000.000000-1-aaaa", queuedMs)
 	m = press(m, "r") // reload
 	m = mi.model(120, 30)
 	m = press(m, "j", "M")
@@ -31,11 +29,9 @@ func TestLocalMilestonesInPickerAndLine(t *testing.T) {
 		t.Fatalf("msg=%q outbox=%d", m.msg, mi.outbox())
 	}
 	var body string
-	ents, _ := os.ReadDir(filepath.Join(mi.dir, "mirror", "outbox"))
-	for _, e := range ents {
-		b, _ := os.ReadFile(filepath.Join(mi.dir, "mirror", "outbox", e.Name()))
-		if strings.Contains(string(b), `"op": "milestone"`) {
-			body = string(b)
+	for _, op := range mi.queuedOps() {
+		if strings.Contains(op, `"op": "milestone"`) {
+			body = op
 		}
 	}
 	if !strings.Contains(body, `"title": "Local One"`) {

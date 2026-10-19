@@ -72,7 +72,7 @@ func TestTemporaryErrorIsRetried(t *testing.T) {
 func TestSyncSkipsLocalOnlyRepoWithQueuedOps(t *testing.T) {
 	e := newEnv(t)
 	e.run("close", "lib#3")
-	e.write("../moon.toml", "mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\nlocal = true\n")
+	e.writeConfig("mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\nlocal = true\n")
 	g := e.useMem()
 	e.run("sync", "--all", "--quiet")
 	e.run("push", "--all")
@@ -95,11 +95,11 @@ func TestAutosyncSwitchesAndStatus(t *testing.T) {
 	e.extra["MOON_AUTOSYNC"] = "0"
 	eq(t, "env off", strings.Split(status(), "\n")[1], "autosync: off (MOON_AUTOSYNC=0)")
 	delete(e.extra, "MOON_AUTOSYNC")
-	e.write("../moon.toml", "autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
+	e.writeConfig("autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
 	eq(t, "config off", strings.Split(status(), "\n")[1], "autosync: off (autosync = false in moon.toml)")
 	e.extra["MOON_AUTOSYNC"] = "1"
 	eq(t, "env on beats config", strings.Split(status(), "\n")[1], "autosync: on, has not run yet")
-	e.write("autosync.log", "2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s\n")
+	e.putAutosyncLog("2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s\n")
 	eq(t, "last run", strings.Split(status(), "\n")[1], "autosync: on, last run 2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s")
 	if o, _, _ := e.run("status", "--format", "json"); !strings.Contains(o, `"autosync": {"on": true, "off_reason": null, "last_run": "2026-10-19T10:00:00 SYNC`) {
 		t.Fatal(o)
@@ -151,7 +151,7 @@ func TestAutosyncOffStopsTheBackgroundPushAfterAWrite(t *testing.T) {
 	}
 	e := newEnv(t) // moon.toml says autosync = false
 	delete(e.extra, "ISSUES_NO_AUTOSYNC")
-	e.write("../moon.toml", "autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
+	e.writeConfig("autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
 	e.extra["ISSUES_TEST_SPAWN"] = e.home + "-spawn"
 	seedIndex(e)
 	e.run("comment", "app#9", "--body", "hi")

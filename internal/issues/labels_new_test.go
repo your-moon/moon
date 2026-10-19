@@ -8,7 +8,7 @@ import (
 func TestLabelsNewQueuesAndUnlocksOfflineUse(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/labels.tsv", "bug\t d73a4a\n")
+	e.putFile("app", fileLabels, "bug\t d73a4a\n")
 	_, errs, code := e.run("new", "--repo", "app", "--title", "t", "--body", "b", "-L", "area::sim")
 	if code == 0 || !strings.Contains(errs, "labels new") {
 		t.Fatalf("unknown label must be refused and name the command: %d %q", code, errs)
@@ -38,7 +38,7 @@ func TestLabelsNewQueuesAndUnlocksOfflineUse(t *testing.T) {
 func TestPushCreatesLabelBeforeItsUsers(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/labels.tsv", "bug\t d73a4a\n")
+	e.putFile("app", fileLabels, "bug\t d73a4a\n")
 	e.run("labels", "new", "area::sim", "--color", "1d76db", "-D", "simulator", "-R", "app")
 	e.run("new", "--repo", "app", "--title", "t", "--body", "b", "-L", "area::sim")
 	g := e.useMem()

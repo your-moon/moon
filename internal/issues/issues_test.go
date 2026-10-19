@@ -27,7 +27,7 @@ func TestRenderParseRoundTrip(t *testing.T) {
 	text := renderIssue(fixtureIssue())
 	want := "---\nnumber: 7\ntitle: \"widget: renders \\\"blank\\\" ünïcode\\ttab\"\nstate: \"open\"\nstate_reason: null\nlabels: [\"bug\", \"area::ui\"]\nmilestone: null\nassignees: []\nauthor: \"ghost\"\ncreated_at: \"2026-01-01T00:00:00Z\"\nupdated_at: \"2026-02-01T00:00:00Z\"\nurl: \"https://github.com/example/app/issues/7\"\n---\n\nline one\nline two\n\n## Comments\n\n### ghost · 2026-01-02T00:00:00Z · id 11\n\nfirst\n"
 	eq(t, "render", text, want)
-	e.write("app/7.md", text)
+	e.putIssue("app", "7", text)
 	h := headerOf(text)
 	eq(t, "title", hStr(h, "title"), "widget: renders \"blank\" ünïcode\ttab")
 	eq(t, "labels", strings.Join(hList(h, "labels"), ","), "bug,area::ui")
@@ -35,7 +35,7 @@ func TestRenderParseRoundTrip(t *testing.T) {
 	if err := a.rebuildIndex("app", nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	eq(t, "index", e.read("app/index.tsv"), "7\topen\t\tbug,area::ui\t2026-02-01T00:00:00Z\twidget: renders \"blank\" ünïcode tab\n")
+	eq(t, "index", e.getFile("app", fileIndex), "7\topen\t\tbug,area::ui\t2026-02-01T00:00:00Z\twidget: renders \"blank\" ünïcode tab\n")
 	if r := a.readIndex("app"); len(r) != 1 || r[0][0] != "7" {
 		t.Fatalf("readIndex %v", r)
 	}
@@ -49,7 +49,7 @@ func TestPRRoundTrip(t *testing.T) {
 	}{7})
 	r := prRowOf(n)
 	e := newEnv(t)
-	e.write("app/prs.tsv", r.tsv())
+	e.putFile("app", filePRs, r.tsv())
 	got := e.app().readPRs("app")["3"]
 	if got != r || got.Title != "fix thing" || got.MergeCommit != "" {
 		t.Fatalf("row %+v", got)
@@ -92,7 +92,7 @@ func TestConfig(t *testing.T) {
 }
 
 func seedIndex(e *env) {
-	e.write("app/index.tsv", "3\topen\tv1\tbug\t2026-02-01T00:00:00Z\tthird\n2\topen\t\t\t2026-02-01T00:00:00Z\tsecond\n1\tclosed\t\t\t2026-02-01T00:00:00Z\tfirst\n")
+	e.putFile("app", fileIndex, "3\topen\tv1\tbug\t2026-02-01T00:00:00Z\tthird\n2\topen\t\t\t2026-02-01T00:00:00Z\tsecond\n1\tclosed\t\t\t2026-02-01T00:00:00Z\tfirst\n")
 }
 
 func TestClaimTTLAndFrontier(t *testing.T) {
@@ -169,12 +169,12 @@ func TestClaimDeadPidIsStale(t *testing.T) {
 func TestClaimFileFormat(t *testing.T) {
 	e := newEnv(t)
 	e.run("claim", "app#5", "--agent", "bot", "--ttl", "2h", "--pid", "0")
-	s := e.read("claims/app-5.json")
+	s := e.getClaim("app", "5")
 	if !strings.HasPrefix(s, `{"agent": "bot", "pid": 0, "host": "`) || !strings.HasSuffix(s, `, "ttl": 7200}`+"\n") {
 		t.Fatal(s)
 	}
 	// the Python tool's float ts parses
-	e.write("claims/app-6.json", `{"agent": "py", "pid": 0, "host": "h", "ts": 1772000000.123456, "ttl": 60}`+"\n")
+	e.putClaim("app", "6", `{"agent": "py", "pid": 0, "host": "h", "ts": 1772000000.123456, "ttl": 60}`+"\n")
 	out, _, _ := e.run("claims")
 	contains0(t, "claims", out, "app#6\tSTALE\tpy\th\tpid=-\t")
 }
@@ -235,7 +235,7 @@ func TestQueueReplay(t *testing.T) {
 func TestQueueFailureKeepsOrderAndRetries(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/2.md", renderIssue(fixtureIssueNum(2)))
+	e.putIssue("app", "2", renderIssue(fixtureIssueNum(2)))
 	seedIndex(e)
 	e.run("comment", "app#2", "--body", "one")
 	e.run("label", "app#2", "--add", "bug")
@@ -312,7 +312,7 @@ func TestCreateIsIdempotentByMarker(t *testing.T) {
 	ref := strings.Fields(out)[3]
 	lid := strings.TrimPrefix(ref, "app#")
 	// a mirror file already carries the marker: the create must not call gh
-	e.write("app/55.md", "---\nnumber: 55\n---\n\nbody <!-- local-id: "+lid+" -->\n")
+	e.putIssue("app", "55", "---\nnumber: 55\n---\n\nbody <!-- local-id: "+lid+" -->\n")
 	g := e.useMem()
 	out, _, _ = e.run("push")
 	eq(t, "push", out, "PUSH pushed=1 failed=0\n")
@@ -327,7 +327,7 @@ func TestCreateIsIdempotentByMarker(t *testing.T) {
 func TestShowOverlaysPending(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/2.md", renderIssue(fixtureIssueNum(2)))
+	e.putIssue("app", "2", renderIssue(fixtureIssueNum(2)))
 	seedIndex(e)
 	e.run("label", "app#2", "--add", "new", "--remove", "bug")
 	e.run("milestone", "app#2", "v9")
@@ -374,10 +374,10 @@ func TestPullWithFakeGitHub(t *testing.T) {
 	if code != 0 {
 		t.Fatal(code)
 	}
-	eq(t, "index", e.read("app/index.tsv"), "5\tclosed\tv1\tbug\t2026-02-02T00:00:00Z\tt\n")
-	eq(t, "cursor", e.read("app/cursor"), "2026-02-02T00:00:00Z\n")
-	eq(t, "milestones", e.read("app/milestones.tsv"), "3\t\tv1\topen\t2026-04-01\tfirst\\tline\\nsecond\t2026-02-01T00:00:00Z\n")
-	eq(t, "prs", e.read("app/prs.tsv"), "6\topen\t1\th\to\tmain\t2026-02-01T00:00:00Z\t\t\tghost\t2026-02-03T00:00:00Z\t5\tp\n")
+	eq(t, "index", e.getFile("app", fileIndex), "5\tclosed\tv1\tbug\t2026-02-02T00:00:00Z\tt\n")
+	eq(t, "cursor", e.getFile("app", fileCursor), "2026-02-02T00:00:00Z\n")
+	eq(t, "milestones", e.getFile("app", fileMilestones), "3\t\tv1\topen\t2026-04-01\tfirst\\tline\\nsecond\t2026-02-01T00:00:00Z\n")
+	eq(t, "prs", e.getFile("app", filePRs), "6\topen\t1\th\to\tmain\t2026-02-01T00:00:00Z\t\t\tghost\t2026-02-03T00:00:00Z\t5\tp\n")
 	out, _, _ = e.run("pull", "--repo", "app")
 	eq(t, "idempotent pull", out, "PULL app=0\n")
 	out, _, _ = e.run("prs", "--repo", "app")
@@ -386,12 +386,12 @@ func TestPullWithFakeGitHub(t *testing.T) {
 	e.now = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	out, _, _ = e.run("prune", "--repo", "app")
 	eq(t, "prune", out, "PRUNE removed app=1\n")
-	if e.exists("app/5.md") || !strings.Contains(e.read("app/index.tsv"), "5\tclosed") {
+	if e.hasIssue("app", "5") || !strings.Contains(e.getFile("app", fileIndex), "5\tclosed") {
 		t.Fatal("prune must drop the file and keep the row")
 	}
 	// a claim guards the file from pruning
-	e.write("app/5.md", renderIssue(fixtureIssueNum(5)))
-	e.write("app/5.md", strings.Replace(e.read("app/5.md"), `state: "open"`, `state: "closed"`, 1))
+	e.putIssue("app", "5", renderIssue(fixtureIssueNum(5)))
+	e.putIssue("app", "5", strings.Replace(e.getIssue("app", "5"), `state: "open"`, `state: "closed"`, 1))
 	e.run("claim", "app#5", "--agent", "g")
 	out, _, _ = e.run("prune", "--repo", "app")
 	eq(t, "prune guarded", out, "PRUNE removed app=0\n")
@@ -403,8 +403,8 @@ func TestAutosyncSpawnsOnceWhenStale(t *testing.T) {
 	spawn := filepath.Join(t.TempDir(), "spawn.log")
 	e.extra["ISSUES_TEST_SPAWN"] = spawn
 	seedIndex(e)
-	e.write("app/lastpull", "1772366400\n")
-	e.write("lib/lastpull", "1772366400\n")
+	e.putFile("app", fileLastpull, "1772366400\n")
+	e.putFile("lib", fileLastpull, "1772366400\n")
 	e.now = time.Unix(1772366400+601, 0)
 	_, errs, _ := e.run("ls")
 	contains0(t, "stderr", errs, "(mirror 10 min old; refreshing in background)")
@@ -413,7 +413,7 @@ func TestAutosyncSpawnsOnceWhenStale(t *testing.T) {
 	b, _ := os.ReadFile(spawn)
 	eq(t, "spawns", string(b), "spawn\n")
 	// fresh mirror: no spawn
-	os.Remove(filepath.Join(e.home, ".autosync"))
+	e.store().Markers.Release()
 	e.now = time.Unix(1772366400+60, 0)
 	_, errs, _ = e.run("ls")
 	eq(t, "fresh", errs, "")
@@ -533,14 +533,13 @@ func TestWriteKicksBackgroundPush(t *testing.T) {
 	e.run("comment", "app#9", "--body", "again")
 	b, _ = os.ReadFile(spawn)
 	eq(t, "no second spawn", string(b), "spawn\n")
-	if !e.exists(".autosync.again") {
+	if !e.store().Markers.TakeAgain() {
 		t.Fatal("a write during a running sync must leave .autosync.again")
 	}
 	// reads do not kick a push
-	os.Remove(filepath.Join(e.home, ".autosync"))
-	os.Remove(filepath.Join(e.home, ".autosync.again"))
-	e.write("app/lastpull", strconv.FormatInt(e.now.Unix(), 10)+"\n")
-	e.write("lib/lastpull", strconv.FormatInt(e.now.Unix(), 10)+"\n")
+	e.store().Markers.Release()
+	e.putFile("app", fileLastpull, strconv.FormatInt(e.now.Unix(), 10)+"\n")
+	e.putFile("lib", fileLastpull, strconv.FormatInt(e.now.Unix(), 10)+"\n")
 	e.run("ls")
 	b, _ = os.ReadFile(spawn)
 	eq(t, "read: no spawn", string(b), "spawn\n")

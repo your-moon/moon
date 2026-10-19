@@ -12,7 +12,7 @@ import (
 )
 
 func (mi *mirror) milestones(alias string, rows ...string) {
-	mi.write(alias+"/milestones.tsv", strings.Join(rows, "\n")+"\n")
+	mi.putMilestones(alias, strings.Join(rows, "\n")+"\n")
 }
 
 func (mi *mirror) shell(w, h int) Shell {

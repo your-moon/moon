@@ -98,12 +98,121 @@ func (e *env) app() *App {
 		Now: func() time.Time { return e.now }, Host: "testhost", Environ: func(k string) string { return e.extra[k] }, Repos: cfg.Repos}
 }
 
-func (e *env) write(rel, content string) {
-	p := filepath.Join(e.home, rel)
-	os.MkdirAll(filepath.Dir(p), 0o755)
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+// The mirror, through its collections. Tests seed and assert with these, so a change to how the store keeps
+// its data does not touch them.
+
+func (e *env) store() mirrorStore { return e.app().mirror() }
+
+// putFile and getFile address a repo's data file (index, prs, milestones, labels, lastpull, cursor).
+func (e *env) putFile(short string, f repoFile, text string) {
+	e.t.Helper()
+	if _, err := e.store().Issues.Write(short, f, text); err != nil {
 		e.t.Fatal(err)
 	}
+}
+
+func (e *env) getFile(short string, f repoFile) string {
+	e.t.Helper()
+	s, err := e.store().Issues.Read(short, f)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return s
+}
+
+func (e *env) hasFile(short string, f repoFile) bool { return e.store().Issues.Has(short, f) }
+
+func (e *env) putIssue(short, ident, text string) {
+	e.t.Helper()
+	if err := e.store().Issues.Put(short, ident, text); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) getIssue(short, ident string) string {
+	e.t.Helper()
+	s, err := e.store().Issues.Get(short, ident)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return s
+}
+
+func (e *env) hasIssue(short, ident string) bool { return e.store().Issues.Exists(short, ident) }
+
+func (e *env) putPR(short string, n int, text string) {
+	e.t.Helper()
+	if _, err := e.store().Issues.PutPR(short, n, text); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) putClaim(short, ident, body string) {
+	e.t.Helper()
+	if err := e.store().Claims.Put(e.store().Claims.Key(short, ident), body); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) getClaim(short, ident string) string {
+	e.t.Helper()
+	b, err := e.store().Claims.Get(e.store().Claims.Key(short, ident))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return string(b)
+}
+
+func (e *env) hasClaim(short, ident string) bool {
+	_, err := e.store().Claims.Get(e.store().Claims.Key(short, ident))
+	return err == nil
+}
+
+// mapLocal records that local id lid of short became GitHub number n; localmap lists what is recorded, one
+// "short<TAB>lid<TAB>n" line per row.
+func (e *env) mapLocal(short, lid string, n int) {
+	e.t.Helper()
+	os.MkdirAll(e.home, 0o755)
+	if err := e.store().LocalIDs.Append(short, lid, n); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) localmap() string {
+	var b strings.Builder
+	for _, r := range e.store().LocalIDs.Rows() {
+		fmt.Fprintf(&b, "%s\t%s\t%d\n", r.Short, r.Lid, r.N)
+	}
+	return b.String()
+}
+
+// outboxKeys lists the queued ops by key; outboxText is one op as stored.
+func (e *env) outboxKeys() []string { return e.store().Outbox.List() }
+
+func (e *env) outboxText(key string) string {
+	e.t.Helper()
+	b, err := e.store().Outbox.Get(key)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return string(b)
+}
+
+// putAutosyncLog is what the last background sync wrote.
+func (e *env) putAutosyncLog(text string) {
+	os.MkdirAll(e.home, 0o755)
+	lf, err := e.store().Markers.Log()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer lf.Close()
+	lf.WriteString(text)
+}
+
+// blockLocalmap makes the step after a create fail (the localmap cannot be written); the returned func lets it work.
+func (e *env) blockLocalmap() func() {
+	os.MkdirAll(filepath.Join(e.home, "localmap.tsv"), 0o755)
+	return func() { e.rawRemove("localmap.tsv") }
 }
 
 // writeConfig replaces the config file (moon.toml next to the mirror).
@@ -113,7 +222,17 @@ func (e *env) writeConfig(text string) {
 	}
 }
 
-func (e *env) read(rel string) string {
+// Raw paths under the mirror: only the on-disk format tests (format_test.go) and fault injection use these.
+
+func (e *env) rawWrite(rel, content string) {
+	p := filepath.Join(e.home, rel)
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) rawRead(rel string) string {
 	b, err := os.ReadFile(filepath.Join(e.home, rel))
 	if err != nil {
 		e.t.Fatal(err)
@@ -121,10 +240,12 @@ func (e *env) read(rel string) string {
 	return string(b)
 }
 
-func (e *env) exists(rel string) bool {
+func (e *env) rawExists(rel string) bool {
 	_, err := os.Stat(filepath.Join(e.home, rel))
 	return err == nil
 }
+
+func (e *env) rawRemove(rel string) { os.Remove(filepath.Join(e.home, rel)) }
 
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)

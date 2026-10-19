@@ -10,8 +10,8 @@ import (
 
 func sessionEnv(t *testing.T) (*env, *Session) {
 	e := newEnv(t)
-	e.write("app/index.tsv", "3\topen\tv1\tbug,area::ui\t2026-02-03T00:00:00Z\tThird thing\n2\topen\t\t\t2026-02-02T00:00:00Z\tsecond: ünï\n1\tclosed\t\tdocs\t2026-02-01T00:00:00Z\tfirst\n")
-	e.write("app/milestones.tsv", "v1\topen\t2\t1\t2026-04-01T00:00:00Z\nv2\topen\t0\t0\t\n")
+	e.putFile("app", fileIndex, "3\topen\tv1\tbug,area::ui\t2026-02-03T00:00:00Z\tThird thing\n2\topen\t\t\t2026-02-02T00:00:00Z\tsecond: ünï\n1\tclosed\t\tdocs\t2026-02-01T00:00:00Z\tfirst\n")
+	e.putFile("app", fileMilestones, "v1\topen\t2\t1\t2026-04-01T00:00:00Z\nv2\topen\t0\t0\t\n")
 	s, err := NewSession(e.cfg, "", Env{Getenv: func(k string) string { return e.extra[k] }, Cwd: "/", Now: func() time.Time { return e.now }})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestSessionMissingMirror(t *testing.T) {
 
 func TestSessionWriteKicksBackgroundPush(t *testing.T) {
 	e := newEnv(t)
-	e.write("app/index.tsv", "3\topen\t\t\t2026-02-03T00:00:00Z\tThird thing\n")
+	e.putFile("app", fileIndex, "3\topen\t\t\t2026-02-03T00:00:00Z\tThird thing\n")
 	spawn := filepath.Join(t.TempDir(), "spawn.log")
 	e.extra["ISSUES_NO_AUTOSYNC"] = ""
 	e.extra["ISSUES_TEST_SPAWN"] = spawn

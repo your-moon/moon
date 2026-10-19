@@ -40,9 +40,6 @@ func TestPushBatchesIndependentWrites(t *testing.T) {
 			t.Fatalf("mutation %q missing from %s", want, got)
 		}
 	}
-	if n, _ := os.ReadDir(e.home + "/.outbox"); len(n) != 0 {
-		t.Logf("outbox dir has %d entries", len(n))
-	}
 	if left := e.app().loadOutbox(); len(left) != 0 {
 		t.Fatalf("%d ops left queued", len(left))
 	}

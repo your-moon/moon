@@ -2,8 +2,8 @@ package issues
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -60,7 +60,7 @@ func seedIssueBody(e *env, n int, state, body string) {
 	i := fixtureIssueNum(n)
 	i.State, i.Body = state, body
 	i.Comments.Nodes = nil
-	e.write(fmt.Sprintf("app/%d.md", n), renderIssue(i))
+	e.putIssue("app", strconv.Itoa(n), renderIssue(i))
 }
 
 func reindex(e *env) {

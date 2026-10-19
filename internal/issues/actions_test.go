@@ -43,7 +43,7 @@ func TestActionAllows(t *testing.T) {
 // share it (a read's own autosync is BeforeRead's, not this).
 func TestCLIQueuedWriteKicksPushOnce(t *testing.T) {
 	e := newEnv(t)
-	e.write("app/index.tsv", "3\topen\t\t\t2026-02-03T00:00:00Z\tThird thing\n")
+	e.putFile("app", fileIndex, "3\topen\t\t\t2026-02-03T00:00:00Z\tThird thing\n")
 	spawn := filepath.Join(t.TempDir(), "spawn.log")
 	delete(e.extra, "ISSUES_NO_AUTOSYNC")
 	e.extra["ISSUES_TEST_SPAWN"] = spawn

@@ -88,13 +88,13 @@ func TestLabelColWidth(t *testing.T) {
 const longLabels = "kind:bug,area:payments-gateway,triage:needs-information,priority-high,customer-reported"
 
 func longFixture(e *env) {
-	e.write("app/index.tsv", strings.Join([]string{
+	e.putFile("app", fileIndex, strings.Join([]string{
 		"3\topen\t\t" + longLabels + "\t2026-02-12T09:00:00Z\tcheckout: card form loses focus after the 3-D secure redirect on slow phones",
 		"2\topen\t\tkind:bug,area:web\t2026-02-11T09:00:00Z\tsearch: slow on big projects",
 		"1\topen\t\t\t2026-02-10T09:00:00Z\tdocs: no labels at all",
 		"",
 	}, "\n"))
-	e.write("app/lastpull", "1772366400\n")
+	e.putFile("app", fileLastpull, "1772366400\n")
 }
 
 // column returns where a header starts in the first line.
@@ -211,7 +211,7 @@ func TestShowListsEveryLabelInFull(t *testing.T) {
 			Name string `json:"name"`
 		}{l})
 	}
-	e.write("app/3.md", renderIssue(n))
+	e.putIssue("app", "3", renderIssue(n))
 	e.tty, e.width, e.extra["NO_COLOR"] = true, 40, "1"
 	out, _, code := e.run("show", "app#3")
 	if code != 0 {

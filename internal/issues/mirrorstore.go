@@ -29,10 +29,23 @@ type mirrorStore struct {
 	Markers  Markers
 }
 
-func (a *App) mirror() mirrorStore {
-	h := a.Home
-	return mirrorStore{h, Issues{h}, Claims{h}, Outbox{h}, LocalIDs{h}, Markers{h}}
+func (a *App) mirror() mirrorStore { return OpenMirror(a.Home) }
+
+// Mirror is the mirror's collections, opened on a home directory. OpenMirror and the File* names below exist so
+// that tests outside this package (internal/tui) can seed and read a mirror through the collections.
+type Mirror = mirrorStore
+
+func OpenMirror(home string) Mirror {
+	return mirrorStore{home, Issues{home}, Claims{home}, Outbox{home}, LocalIDs{home}, Markers{home}}
 }
+
+// The per-repo data files, for Issues.Read, Write and Has from outside the package.
+var (
+	FileIndex      = fileIndex
+	FilePRs        = filePRs
+	FileMilestones = fileMilestones
+	FileLastpull   = fileLastpull
+)
 
 // ---------- low-level file helpers (the only os file calls on mirror data) ----------
 

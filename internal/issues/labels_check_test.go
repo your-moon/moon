@@ -12,7 +12,7 @@ func seedLabels(e *env, names ...string) {
 	for _, n := range names {
 		fmt.Fprintf(&b, "%s\tcc0000\t\n", n)
 	}
-	e.write("app/labels.tsv", b.String())
+	e.putFile("app", fileLabels, b.String())
 }
 
 func queuedLabels(t *testing.T, e *env) string {
@@ -96,7 +96,7 @@ func TestLabelsNotCheckedWhenListIsUnknownOrIncomplete(t *testing.T) {
 		t.Fatal("99 labels is a complete list: must be refused")
 	}
 	os.WriteFile(e.cfg, []byte("mirror_dir = \"mirror\"\n[repos.notes]\nlocal = true\n"), 0o644)
-	e.write("notes/labels.tsv", "bug\tcc0000\t\n")
+	e.putFile("notes", fileLabels, "bug\tcc0000\t\n")
 	if _, _, code := e.run("new", "-R", "notes", "--title", "t", "--body", "x", "-L", "free-form"); code != 0 {
 		t.Fatal("local-only repo: any label is fine")
 	}
@@ -116,7 +116,7 @@ func TestCloseLabelsTypoBudgetByLength(t *testing.T) {
 
 func TestRepoWithNoLabelsRefusesAnyLabel(t *testing.T) {
 	e := newEnv(t)
-	e.write("app/labels.tsv", "")
+	e.putFile("app", fileLabels, "")
 	if _, _, code := e.run("new", "-R", "app", "--title", "t", "--body", "x", "-L", "bug"); code != 2 || queued(e) != 0 {
 		t.Fatalf("code=%d queued=%d", code, queued(e))
 	}

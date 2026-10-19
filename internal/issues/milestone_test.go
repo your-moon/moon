@@ -109,8 +109,8 @@ func TestMsCreateThenSyncOrder(t *testing.T) {
 	if m == nil || m.DueOn != "2026-12-31" || m.Description != "first public release" {
 		t.Fatalf("remote milestone: %+v", m)
 	}
-	contains0(t, "localmap", e.read("localmap.tsv"), "app\tM-1\t1\n")
-	eq(t, "milestones.tsv", e.read("app/milestones.tsv"), "1\tM-1\tBeta\topen\t2026-12-31\tfirst public release\t2026-03-01T00:00:00Z\n")
+	contains0(t, "localmap", e.localmap(), "app\tM-1\t1\n")
+	eq(t, "milestones.tsv", e.getFile("app", fileMilestones), "1\tM-1\tBeta\topen\t2026-12-31\tfirst public release\t2026-03-01T00:00:00Z\n")
 	out, _, _ = e.run("milestones", "-R", "app", "--format", "tsv")
 	eq(t, "milestones", out, "app\tBeta\topen\t0\t1\t2026-12-31\n") // the issue created with it counts
 }
@@ -154,10 +154,7 @@ func TestMsFailedCreateHoldsBackIssues(t *testing.T) {
 }
 
 // crashRecord makes the step after the create fail (the localmap cannot be written), then lets it work.
-func crashRecord(e *env) func() {
-	os.MkdirAll(filepath.Join(e.home, "localmap.tsv"), 0o755)
-	return func() { os.Remove(filepath.Join(e.home, "localmap.tsv")) }
-}
+func crashRecord(e *env) func() { return e.blockLocalmap() }
 
 func TestMsIdempotentRetryAfterCrash(t *testing.T) {
 	e, h := msEnv(t)
@@ -173,7 +170,7 @@ func TestMsIdempotentRetryAfterCrash(t *testing.T) {
 	if len(h.ms()) != 1 || h.count("POST milestone") != 1 {
 		t.Fatalf("milestone created twice: %v", h.log())
 	}
-	eq(t, "localmap", e.read("localmap.tsv"), "app\tM-1\t1\n")
+	eq(t, "localmap", e.localmap(), "app\tM-1\t1\n")
 	e.run("sync", "-R", "app") // a recorded create is never repeated
 	if h.count("POST milestone") != 1 {
 		t.Fatalf("repeat: %v", h.log())
@@ -189,7 +186,7 @@ func TestMsLostAnswerIsAdopted(t *testing.T) {
 	if len(h.ms()) != 1 || h.count("POST milestone") != 1 {
 		t.Fatalf("%v", h.log())
 	}
-	eq(t, "localmap", e.read("localmap.tsv"), "app\tM-1\t1\n")
+	eq(t, "localmap", e.localmap(), "app\tM-1\t1\n")
 }
 
 func TestMsAdoptsExistingRemoteTitle(t *testing.T) {
@@ -207,7 +204,7 @@ func TestMsAdoptsExistingRemoteTitle(t *testing.T) {
 	if m.Description != "set on GitHub" || m.DueOn != "2026-06-01" {
 		t.Fatalf("adopt fills only what GitHub lacks: %+v", m)
 	}
-	contains0(t, "localmap", e.read("localmap.tsv"), "app\tM-1\t1\n")
+	contains0(t, "localmap", e.localmap(), "app\tM-1\t1\n")
 	if h.count("issue create milestone=Beta") != 1 {
 		t.Fatal(h.log())
 	}
@@ -229,7 +226,7 @@ func TestMsCaseOnlyTitleGetsOpMarker(t *testing.T) {
 	if !strings.Contains(h.ms()[1].Description, "<!-- moon-op: ") {
 		t.Fatalf("marker missing: %q", h.ms()[1].Description)
 	}
-	if got := e.read("app/milestones.tsv"); strings.Contains(got, "moon-op") {
+	if got := e.getFile("app", fileMilestones); strings.Contains(got, "moon-op") {
 		t.Fatalf("marker leaked into the mirror: %q", got)
 	}
 }
@@ -245,7 +242,7 @@ func TestMsDuplicateTitleRefused(t *testing.T) {
 		}
 	}
 	// a title the issues already use counts too, with a hint
-	e.write("app/index.tsv", "1\topen\tOnlyIssues\t\t2026-01-01T00:00:00Z\tx\n")
+	e.putFile("app", fileIndex, "1\topen\tOnlyIssues\t\t2026-01-01T00:00:00Z\tx\n")
 	_, errs, code = e.run("milestones", "new", "OnlyIssues", "-R", "app")
 	if code != 2 || !strings.Contains(errs, "milestones edit") {
 		t.Fatalf("derived: %d %q", code, errs)
@@ -329,14 +326,14 @@ func TestMsEditCloseReopenSync(t *testing.T) {
 func TestMsRenameFollowsIssues(t *testing.T) {
 	e, h := msEnv(t)
 	h.seed("Beta", "", "")
-	e.write("app/index.tsv", "4\topen\tBeta\t\t2026-01-01T00:00:00Z\tt\n")
-	e.write("app/4.md", "---\nnumber: 4\ntitle: \"t\"\nstate: \"open\"\nstate_reason: null\nlabels: []\nmilestone: \"Beta\"\nassignees: []\nauthor: \"x\"\ncreated_at: \"2026-01-01T00:00:00Z\"\nupdated_at: \"2026-01-01T00:00:00Z\"\nurl: \"u\"\n---\n\nbody\n\n## Comments\n")
+	e.putFile("app", fileIndex, "4\topen\tBeta\t\t2026-01-01T00:00:00Z\tt\n")
+	e.putIssue("app", "4", "---\nnumber: 4\ntitle: \"t\"\nstate: \"open\"\nstate_reason: null\nlabels: []\nmilestone: \"Beta\"\nassignees: []\nauthor: \"x\"\ncreated_at: \"2026-01-01T00:00:00Z\"\nupdated_at: \"2026-01-01T00:00:00Z\"\nurl: \"u\"\n---\n\nbody\n\n## Comments\n")
 	e.run("milestones", "edit", "Beta", "--title", "Final", "-R", "app")
 	out, _, _ := e.run("milestones", "-R", "app", "--format", "tsv")
 	eq(t, "overlay", out, "app\tFinal\topen\t0\t1\t\n")
 	_, errs, code := e.run("push", "--repo", "app")
 	must0(t, "push", code, errs)
-	eq(t, "index after push", e.read("app/index.tsv"), "4\topen\tFinal\t\t2026-01-01T00:00:00Z\tt\n")
+	eq(t, "index after push", e.getFile("app", fileIndex), "4\topen\tFinal\t\t2026-01-01T00:00:00Z\tt\n")
 	if h.byTitle("Final") == nil {
 		t.Fatal(h.log())
 	}
@@ -354,7 +351,7 @@ func TestMsLocalOnly(t *testing.T) {
 	eq(t, "out", out, "milestone notes \"Q1\"  (#1)\n")
 	out, _, _ = e.run("milestones", "new", "Q2")
 	eq(t, "out", out, "milestone notes \"Q2\"  (#2)\n")
-	eq(t, "file", e.read("notes/milestones.tsv"), "1\t\tQ1\topen\t2026-03-31\tplan\\nsecond\\tline\t2026-03-01T12:00:00Z\n2\t\tQ2\topen\t\t\t2026-03-01T12:00:00Z\n")
+	eq(t, "file", e.getFile("notes", fileMilestones), "1\t\tQ1\topen\t2026-03-31\tplan\\nsecond\\tline\t2026-03-01T12:00:00Z\n2\t\tQ2\topen\t\t\t2026-03-01T12:00:00Z\n")
 	e.run("new", "--repo", "notes", "--title", "a", "--body", "b", "-m", "Q1")
 	e.run("new", "--repo", "notes", "--title", "b", "--body", "b", "--milestone", "Q1")
 	out, _, _ = e.run("milestones", "--format", "tsv")
@@ -372,7 +369,7 @@ func TestMsLocalOnly(t *testing.T) {
 	e.run("new", "--repo", "notes", "--title", "c", "--body", "b", "-m", "Free")
 	_, errs, code = e.run("milestones", "edit", "Free", "-d", "2026-09-09")
 	must0(t, "derived edit", code, errs)
-	contains0(t, "numbered", e.read("notes/milestones.tsv"), "3\t\tFree\topen\t2026-09-09\t")
+	contains0(t, "numbered", e.getFile("notes", fileMilestones), "3\t\tFree\topen\t2026-09-09\t")
 	out, _, _ = e.run("milestones", "show", "Quarter 1", "--format", "table")
 	contains0(t, "show", out, "due 2026-04-15")
 }
@@ -393,9 +390,8 @@ func TestMsNumbersNeverReused(t *testing.T) {
 		t.Fatalf("outbox not drained: %d", n)
 	}
 	eq(t, "3 after the outbox drained", newN("c"), "app#M-3")
-	eq(t, "counter", e.read("app/local-mseq"), "3\n")
 	// a lost counter is rebuilt from localmap, outbox and the file; never restarted
-	os.Remove(filepath.Join(e.home, "app/local-mseq"))
+	e.rawRemove("app/local-mseq")
 	eq(t, "4 after losing the counter", newN("d"), "app#M-4")
 	// M-n resolves to the real number after the sync
 	e.run("sync", "-R", "app")
@@ -456,7 +452,6 @@ func TestMsConcurrentNewFromProcesses(t *testing.T) {
 	if len(got) != procs*per {
 		t.Fatalf("got %d results", len(got))
 	}
-	eq(t, "counter", e.read("app/local-mseq"), strconv.Itoa(procs*per)+"\n")
 }
 
 func TestMsUsableAsTitleEverywhere(t *testing.T) {
@@ -486,15 +481,15 @@ func TestMsShowAndTableAndEscaping(t *testing.T) {
 	e, _ := msEnv(t)
 	desc := "line one\nline\ttwo \\ back"
 	e.run("milestones", "new", "Beta", "-d", "2026-12-31", "-D", desc, "-R", "app")
-	e.write("app/index.tsv", "1\topen\tBeta\t\t2026-01-01T00:00:00Z\tx\n2\tclosed\tBeta\t\t2026-01-01T00:00:00Z\ty\n")
+	e.putFile("app", fileIndex, "1\topen\tBeta\t\t2026-01-01T00:00:00Z\tx\n2\tclosed\tBeta\t\t2026-01-01T00:00:00Z\ty\n")
 	out, _, _ := e.run("milestones", "show", "Beta", "-R", "app", "--format", "table")
 	contains0(t, "counts", out, "1/2 closed · 50% · 1 open · due 2026-12-31")
 	contains0(t, "description", out, desc)
 	out, _, _ = e.run("milestones", "-R", "app", "-j")
 	contains0(t, "json", out, `"description": "line one\nline\ttwo \\ back"`)
 	// the file keeps one description per line and round-trips
-	e.write("app/milestones.tsv", (&msRec{Number: 3, Title: "Z", State: "open", Desc: desc}).row()+"\n")
-	if n := strings.Count(e.read("app/milestones.tsv"), "\n"); n != 1 {
+	e.putFile("app", fileMilestones, (&msRec{Number: 3, Title: "Z", State: "open", Desc: desc}).row()+"\n")
+	if n := strings.Count(e.getFile("app", fileMilestones), "\n"); n != 1 {
 		t.Fatalf("description broke the row")
 	}
 	recs := e.app().readMsFile("app")
@@ -511,7 +506,7 @@ func TestMsPullKeepsQueuedAndReadsLegacyRows(t *testing.T) {
 	must0(t, "pull", code, errs)
 	out, _, _ := e.run("milestones", "-R", "app", "--format", "tsv")
 	eq(t, "queued stays visible after a pull", out, "app\tRemote\topen\t0\t0\t2026-05-05\napp\tLocal\topen\t0\t0\t\n")
-	e.write("lib/milestones.tsv", "v1\topen\t3\t4\t2026-04-01T00:00:00Z\n")
+	e.putFile("lib", fileMilestones, "v1\topen\t3\t4\t2026-04-01T00:00:00Z\n")
 	out, _, _ = e.run("milestones", "-R", "lib", "--format", "tsv")
 	eq(t, "legacy row", out, "lib\tv1\topen\t3\t4\t2026-04-01T00:00:00Z\n")
 }

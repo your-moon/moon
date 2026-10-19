@@ -6,7 +6,7 @@ import (
 )
 
 func seedOverlay(e *env) {
-	e.write("app/index.tsv", "4\topen\t\tblocked::depends\t2026-02-01T00:00:00Z\tfourth\n3\topen\tv1\tbug\t2026-02-01T00:00:00Z\tthird\n2\topen\t\t\t2026-02-01T00:00:00Z\tsecond\n1\tclosed\t\t\t2026-02-01T00:00:00Z\tfirst\n")
+	e.putFile("app", fileIndex, "4\topen\t\tblocked::depends\t2026-02-01T00:00:00Z\tfourth\n3\topen\tv1\tbug\t2026-02-01T00:00:00Z\tthird\n2\topen\t\t\t2026-02-01T00:00:00Z\tsecond\n1\tclosed\t\t\t2026-02-01T00:00:00Z\tfirst\n")
 }
 
 func lsRow(t *testing.T, e *env, ref string) string {
@@ -38,8 +38,8 @@ func TestReadsOverlayQueuedOps(t *testing.T) {
 	e.run("milestone", "app#3", "none")
 	eq(t, "milestone none", lsRow(t, e, "app#3"), "app#3\topen\t-\tx\tthird")
 	// the mirror itself is untouched
-	if !strings.Contains(e.read("app/index.tsv"), "2\topen\t\t\t") {
-		t.Fatal(e.read("app/index.tsv"))
+	if !strings.Contains(e.getFile("app", fileIndex), "2\topen\t\t\t") {
+		t.Fatal(e.getFile("app", fileIndex))
 	}
 }
 
