@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -17,40 +15,10 @@ import (
 
 // ---------- M-<n> counter ----------
 
-func (a *App) mseqPath(short string) string { return filepath.Join(a.Home, short, "local-mseq") }
-
 // nextMilestoneSeq hands out the next M-<n> (or, for a local-only repo, the next milestone number).
 // Same design as nextLocalSeq: an exclusive flock on a sidecar, a counter that only goes up.
 func (a *App) nextMilestoneSeq(short string) (int, error) {
-	dir := filepath.Join(a.Home, short)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return 0, err
-	}
-	lock, err := os.OpenFile(filepath.Join(dir, "local-mseq.lock"), os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return 0, err
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil { // M_msseqlock
-		return 0, err
-	}
-	last := 0
-	if s, err := readText(a.mseqPath(short)); err == nil {
-		if n, perr := strconv.Atoi(pyStrip(s)); perr == nil && n >= 0 {
-			last = n
-		} else {
-			last = a.scanMaxMsSeq(short)
-		}
-	} else if isNotExist(err) {
-		last = a.scanMaxMsSeq(short)
-	} else {
-		return 0, err
-	}
-	n := last + 1
-	if err := atomicWrite(a.mseqPath(short), strconv.Itoa(n)+"\n", true); err != nil {
-		return 0, err
-	}
-	return n, nil
+	return a.mirror().nextMilestoneSeq(short, func() int { return a.scanMaxMsSeq(short) })
 }
 
 func msSeqOf(id string) int {
@@ -74,7 +42,7 @@ func (a *App) scanMaxMsSeq(short string) int {
 			note(msSeqOf(argStr(o.Args, "local_id")))
 		}
 	}
-	if s, err := readText(a.localmap()); err == nil {
+	if s, err := a.mirror().readLocalmap(); err == nil {
 		for _, line := range strings.Split(s, "\n") {
 			if p := strings.Split(line, "\t"); len(p) == 3 && p[0] == short {
 				note(msSeqOf(p[1]))
@@ -120,7 +88,7 @@ func (a *App) readDesc(o *Opts) (string, bool, error) {
 			b, err := io.ReadAll(a.Stdin)
 			return pyRstrip(string(b)), true, err
 		}
-		s, err := readText(f)
+		s, err := readUserText(f)
 		if err != nil {
 			return "", false, die("cannot read --description-file %s: %v", f, err)
 		}
@@ -150,8 +118,8 @@ func dupError(short, title string, d *msRec) error {
 func (a *App) enqueueMs(op, ref string, args map[string]any) (string, error) {
 	t := a.Now()
 	stem := fmt.Sprintf("%s.%06d-%d-%s", t.Format("20060102T150405"), t.UnixMicro()%1000000, os.Getpid(), uuid4())
-	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, File: filepath.Join(a.outbox(), stem+".json")}
-	return stem, a.saveOp(o)
+	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, File: a.mirror().opFile(stem)}
+	return stem, a.mirror().saveOp(o)
 }
 
 // ---------- commands ----------
@@ -173,7 +141,7 @@ func (a *App) cmdMsNew(o *Opts) error {
 	if err != nil {
 		return err
 	}
-	return a.withLock(".ms.lock", func() error {
+	return a.mirror().withLock(".ms.lock", func() error {
 		if d := msDup(a.msRecs(short), title, ""); d != nil {
 			return dupError(short, title, d)
 		}
@@ -182,7 +150,7 @@ func (a *App) cmdMsNew(o *Opts) error {
 			return err
 		}
 		if a.localOnly(short) {
-			err := a.withLock(".pull.lock", func() error {
+			err := a.mirror().withLock(".pull.lock", func() error {
 				recs := append(a.readMsFile(short), msRec{Number: n, Title: title, State: "open", Due: due, Desc: desc, Updated: a.stamp()})
 				return a.writeMsFile(short, recs)
 			})
@@ -283,8 +251,8 @@ func (a *App) msChange(short string, rec msRec, op string, args map[string]any) 
 // applyMsLocalOnly performs one milestone write on the file of a local-only repo. A title that only
 // issues name gets a row (and a number) the first time it is changed.
 func (a *App) applyMsLocalOnly(short, title, op string, args map[string]any) error {
-	return a.withLock(".ms.lock", func() error {
-		return a.withLock(".pull.lock", func() error {
+	return a.mirror().withLock(".ms.lock", func() error {
+		return a.mirror().withLock(".pull.lock", func() error {
 			recs := a.readMsFile(short)
 			idx := -1
 			for i, r := range recs {
@@ -330,7 +298,7 @@ func (a *App) renameMsInMirror(short, old, new string) error {
 		node.Milestone = &struct {
 			Title string `json:"title"`
 		}{new}
-		if err := atomicWrite(p, renderIssue(node)+comments, false); err != nil {
+		if err := a.mirror().writeIssueFile(p, renderIssue(node)+comments); err != nil {
 			return err
 		}
 	}
@@ -375,16 +343,6 @@ func msWaiting(ops []*Op, i int) bool {
 		}
 	}
 	return false
-}
-
-func (a *App) appendLocalmap(short, id string, n int) error {
-	lm, err := os.OpenFile(a.localmap(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer lm.Close()
-	_, err = fmt.Fprintf(lm, "%s\t%s\t%d\n", short, id, n)
-	return err
 }
 
 // msOpRepo is the alias and GitHub repo a milestone op is about.
@@ -523,7 +481,7 @@ func (a *App) execMsNew(short, repo string, op *Op) error {
 	}
 	num := found.Number
 	if lid != "" {
-		if err := a.appendLocalmap(short, lid, num); err != nil {
+		if err := a.mirror().appendLocalmap(short, lid, num); err != nil {
 			return err
 		}
 	}
@@ -536,7 +494,7 @@ func (a *App) execMsNew(short, repo string, op *Op) error {
 // read after `push` is right before the next pull. The row is found by number, else by its old title;
 // edit changes it, and a row that is not there yet is added only when addLid is non-empty (a create).
 func (a *App) msMirror(short string, num int, title, addLid string, edit func(*msRec), renamedTo string) error {
-	return a.withLock(".pull.lock", func() error {
+	return a.mirror().withLock(".pull.lock", func() error {
 		recs := a.readMsFile(short)
 		idx := -1
 		for i, r := range recs {

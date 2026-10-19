@@ -180,7 +180,7 @@ func (a *App) BeforeRead(name string, o *Opts) error {
 func (a *App) mirrorAge(shorts []string) (float64, bool) {
 	var max float64
 	for _, s := range shorts {
-		b, err := readText(filepath.Join(a.Home, s, "lastpull"))
+		b, err := a.mirror().readLastpull(s)
 		t, perr := strconv.Atoi(pyStrip(b))
 		if err != nil || perr != nil {
 			return 0, false

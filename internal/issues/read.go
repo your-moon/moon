@@ -3,8 +3,6 @@ package issues
 import (
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -228,11 +226,11 @@ func (a *App) cmdShow(o *Opts) error {
 		a.printf("ref: %s (local, pending sync: not on GitHub yet)\ntitle: %s\nstate: %s\nlabels: %s\nmilestone: %s\n\n%s\n",
 			ref, e.title, e.state, strings.Join(e.labels, ","), orDash(e.milestone), e.body)
 	} else {
-		p := filepath.Join(a.Home, short, ident+".md")
+		p := a.mirror().issueFileIdent(short, ident)
 		live := false
 		var text string
 		var h map[string]any
-		text, rerr := readText(p)
+		text, rerr := readMirrorFile(p)
 		if rerr == nil {
 			h = readHeader(p)
 		} else if isNotExist(rerr) && a.localOnly(short) {
@@ -346,7 +344,7 @@ func (a *App) cmdStatus(o *Opts) error {
 			stats = append(stats, repoStat{short: short, n: len(a.readIndex(short)), local: true})
 			continue
 		}
-		s, err := readText(filepath.Join(a.Home, short, "lastpull"))
+		s, err := a.mirror().readLastpull(short)
 		t, perr := strconv.Atoi(pyStrip(s))
 		if err != nil || perr != nil {
 			stats = append(stats, repoStat{short: short})
@@ -478,7 +476,7 @@ func (a *App) cmdPRShow(o *Opts) error {
 	if isLocalIdent(ident) {
 		return die("%s is a local issue ref, not a PR", ref)
 	}
-	s, rerr := readText(filepath.Join(a.Home, short, "pr", ident+".md"))
+	s, rerr := a.mirror().readPRText(short, ident)
 	if rerr == nil {
 		a.println(strings.TrimRight(s, "\n"))
 		return nil
@@ -505,20 +503,13 @@ func (a *App) cmdPRShow(o *Opts) error {
 }
 
 func (a *App) cmdClaims(o *Opts) error {
-	ents, _ := os.ReadDir(a.claimsDir())
-	names := []string{}
-	for _, e := range ents {
-		names = append(names, e.Name())
-	}
-	sort.Strings(names)
+	m := a.mirror()
+	names := m.claimNames()
 	var rows [][]string
 	var sts []Status
 	we := a.newWorkEnv()
 	for _, n := range names {
-		if !strings.HasSuffix(n, ".json") {
-			continue
-		}
-		c := a.readClaim(filepath.Join(a.claimsDir(), n))
+		c := a.readClaim(m.claimNamePath(n))
 		if c == nil {
 			continue
 		}

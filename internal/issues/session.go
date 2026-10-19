@@ -134,11 +134,8 @@ func (s *Session) createdAt(short, num string) string {
 		return v
 	}
 	v := ""
-	if f, err := os.Open(filepath.Join(s.app.Home, short, num+".md")); err == nil {
-		buf := make([]byte, 2048)
-		n, _ := f.Read(buf)
-		f.Close()
-		for _, line := range strings.Split(string(buf[:n]), "\n") {
+	if head, err := s.app.mirror().readIssueHead(short, num, 2048); err == nil {
+		for _, line := range strings.Split(head, "\n") {
 			if k, val, ok := strings.Cut(line, ": "); ok && k == "created_at" {
 				v = strings.Trim(val, `"`)
 				break
@@ -167,20 +164,18 @@ func (s *Session) load(withCreated bool) Snapshot {
 		byRef[op.Ref] = append(byRef[op.Ref], op)
 	}
 	claims := map[string]*Claim{}
-	if ents, err := os.ReadDir(a.claimsDir()); err == nil {
-		for _, e := range ents {
-			if !strings.HasSuffix(e.Name(), ".json") {
-				continue
-			}
-			short, ident, _ := strings.Cut(strings.TrimSuffix(e.Name(), ".json"), "-")
-			if c := a.readClaim(filepath.Join(a.claimsDir(), e.Name())); c != nil {
+	{
+		m := a.mirror()
+		for _, name := range m.claimNames() {
+			short, ident, _ := strings.Cut(strings.TrimSuffix(name, ".json"), "-")
+			if c := a.readClaim(m.claimNamePath(name)); c != nil {
 				claims[short+"#"+ident] = c
 			}
 		}
 	}
 	for _, short := range snap.Aliases {
 		snap.LabelColors[short] = a.labelColors(short)
-		if _, err := os.Stat(filepath.Join(a.Home, short, "index.tsv")); err == nil {
+		if a.mirror().hasIndex(short) {
 			snap.Missing = false
 		}
 		for _, r := range a.readIndex(short) {
@@ -271,8 +266,8 @@ func (s *Session) Detail(ref string) (Detail, error) {
 		e = &eff{title: argStr(t, "title"), state: "open", labels: argList(t, "labels"), milestone: argStr(t, "milestone"), body: argStr(t, "body")}
 		d.Body = e.body
 	} else {
-		p := filepath.Join(a.Home, short, ident+".md")
-		text, rerr := readText(p)
+		p := a.mirror().issueFileIdent(short, ident)
+		text, rerr := readMirrorFile(p)
 		if rerr != nil {
 			if !isNotExist(rerr) {
 				return d, rerr
@@ -394,18 +389,12 @@ type ClaimRow struct {
 // Claims lists every claim, sorted by ref file name like `moon issues claims`.
 func (s *Session) Claims() []ClaimRow {
 	a := s.app
-	ents, _ := os.ReadDir(a.claimsDir())
-	names := []string{}
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
+	m := a.mirror()
+	names := m.claimNames()
 	we := a.newWorkEnv()
 	var out []ClaimRow
 	for _, n := range names {
-		c := a.readClaim(filepath.Join(a.claimsDir(), n))
+		c := a.readClaim(m.claimNamePath(n))
 		if c == nil {
 			continue
 		}

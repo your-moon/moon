@@ -156,7 +156,7 @@ func TestOutboxRefusesWhileAPushIsRunning(t *testing.T) {
 	e := newEnv(t)
 	e.run("new", "-R", "app", "--title", "a", "--body", "x")
 	id := opIDOf(t, e, "new")
-	f, ok := e.app().tryPushLock()
+	f, ok := e.app().mirror().tryPushLock()
 	if !ok {
 		t.Fatal("lock must be free")
 	}

@@ -2,52 +2,20 @@ package issues
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // The per-alias counter <mirror>/<alias>/local-seq holds the last number handed out. Numbers are
 // never reused: the counter only goes up, whatever happens to the issue afterwards.
 
-func (a *App) seqPath(short string) string { return filepath.Join(a.Home, short, "local-seq") }
-
 // nextLocalSeq returns the next number for alias. It holds an exclusive flock on a sidecar file
 // (the counter itself is replaced by rename, so it cannot carry the lock), reads the counter,
 // writes counter+1 to a temp file and renames it into place.
 func (a *App) nextLocalSeq(short string) (int, error) {
-	dir := filepath.Join(a.Home, short)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return 0, err
-	}
-	lock, err := os.OpenFile(filepath.Join(dir, "local-seq.lock"), os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return 0, err
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil { // M_seqlock
-		return 0, err
-	}
-	last := 0
-	if s, err := readText(a.seqPath(short)); err == nil {
-		if n, perr := strconv.Atoi(pyStrip(s)); perr == nil && n >= 0 {
-			last = n
-		} else {
-			last = a.scanMaxSeq(short) // corrupt counter: rebuild from what is on disk
-		}
-	} else if isNotExist(err) {
-		last = a.scanMaxSeq(short) // first use, or a counter that predates this file
-	} else {
-		return 0, err
-	}
-	n := last + 1
-	if err := atomicWrite(a.seqPath(short), strconv.Itoa(n)+"\n", true); err != nil {
-		return 0, err
-	}
-	return n, nil
+	return a.mirror().nextIssueSeq(short, func() int { return a.scanMaxSeq(short) })
 }
 
 // scanMaxSeq is the highest number already in use for alias: sequential local ids in the outbox
@@ -66,7 +34,7 @@ func (a *App) scanMaxSeq(short string) int {
 			}
 		}
 	}
-	if s, err := readText(a.localmap()); err == nil {
+	if s, err := a.mirror().readLocalmap(); err == nil {
 		for _, line := range strings.Split(s, "\n") {
 			p := strings.Split(line, "\t")
 			if len(p) == 3 && p[0] == short {
@@ -95,10 +63,6 @@ func (a *App) scanMaxSeq(short string) int {
 
 func (a *App) stamp() string { return a.Now().UTC().Format("2006-01-02T15:04:05Z") }
 
-func (a *App) issuePath(short string, n int) string {
-	return filepath.Join(a.Home, short, fmt.Sprintf("%d.md", n))
-}
-
 func (a *App) newLocalOnly(short, title, body string, labels []string, milestone string) (int, error) {
 	n, err := a.nextLocalSeq(short)
 	if err != nil {
@@ -118,8 +82,8 @@ func (a *App) newLocalOnly(short, title, body string, labels []string, milestone
 			Title string `json:"title"`
 		}{milestone}
 	}
-	err = a.withLock(".pull.lock", func() error {
-		if err := atomicWrite(a.issuePath(short, n), renderIssue(node), false); err != nil {
+	err = a.mirror().withLock(".pull.lock", func() error {
+		if err := a.mirror().writeIssueFile(a.mirror().issueFile(short, n), renderIssue(node)); err != nil {
 			return err
 		}
 		return a.rebuildIndex(short, nil, nil)
@@ -133,7 +97,7 @@ var commentIDRe = regexp.MustCompile(` · id (\d+)\n`)
 
 // loadLocalIssue parses a mirror file written by renderIssue back into a node plus its raw comment text.
 func loadLocalIssue(path string) (*issueNode, string, error) {
-	text, err := readText(path)
+	text, err := readMirrorFile(path)
 	if err != nil {
 		return nil, "", err
 	}
@@ -189,8 +153,8 @@ func (a *App) applyLocalOnly(kind, ref string, args map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return a.withLock(".pull.lock", func() error {
-		path := a.issuePath(short, num)
+	return a.mirror().withLock(".pull.lock", func() error {
+		path := a.mirror().issueFile(short, num)
 		node, comments, err := loadLocalIssue(path)
 		if err != nil {
 			if isNotExist(err) {
@@ -211,7 +175,7 @@ func (a *App) applyLocalOnly(kind, ref string, args map[string]any) error {
 			return err
 		}
 		node.UpdatedAt = a.stamp()
-		if err := atomicWrite(path, renderIssue(node)+comments, false); err != nil {
+		if err := a.mirror().writeIssueFile(path, renderIssue(node)+comments); err != nil {
 			return err
 		}
 		return a.rebuildIndex(short, nil, nil)

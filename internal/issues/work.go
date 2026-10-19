@@ -2,8 +2,6 @@ package issues
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -270,16 +268,13 @@ type workEnv struct {
 func (a *App) newWorkEnv() *workEnv {
 	w := &workEnv{a: a, claims: map[string]*Claim{}, deps: map[string][]int{}, prs: map[string][]WorkPR{},
 		ctx: a.workCtx()}
-	ents, _ := os.ReadDir(a.claimsDir())
-	for _, e := range ents {
-		if !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		short, ident, ok := strings.Cut(strings.TrimSuffix(e.Name(), ".json"), "-")
+	m := a.mirror()
+	for _, name := range m.claimNames() {
+		short, ident, ok := strings.Cut(strings.TrimSuffix(name, ".json"), "-")
 		if !ok {
 			continue
 		}
-		if c := a.readClaim(filepath.Join(a.claimsDir(), e.Name())); c != nil {
+		if c := a.readClaim(m.claimNamePath(name)); c != nil {
 			w.claims[short+"#"+ident] = c
 		}
 	}
@@ -297,7 +292,7 @@ func (w *workEnv) openPRs(short string) []WorkPR {
 		}
 		n, _ := strconv.Atoi(r.Number)
 		text := r.Title
-		if s, err := readText(filepath.Join(w.a.Home, short, "pr", r.Number+".md")); err == nil {
+		if s, err := w.a.mirror().readPRText(short, r.Number); err == nil {
 			text += "\n" + stripFrontMatter(s)
 		}
 		l = append(l, WorkPR{Number: n, Closes: r.closesList(), Text: text})
@@ -496,7 +491,7 @@ func (a *App) cmdSweep(o *Opts) error {
 			if err != nil {
 				continue
 			}
-			if c := a.readClaim(p); c != nil && c.TS == it.ts && c.Agent == it.agent && os.Remove(p) == nil {
+			if c := a.readClaim(p); c != nil && c.TS == it.ts && c.Agent == it.agent && a.mirror().remove(p) == nil {
 				released[it.ref] = true
 			}
 		}

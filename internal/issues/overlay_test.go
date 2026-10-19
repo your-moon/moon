@@ -72,12 +72,12 @@ func TestOverlayStopsWhenOpFailsOrIsDropped(t *testing.T) {
 	ops := e.app().loadOutbox()
 	msg := "boom"
 	ops[0].LastError = &msg
-	if err := e.app().saveOp(ops[0]); err != nil {
+	if err := e.app().mirror().saveOp(ops[0]); err != nil {
 		t.Fatal(err)
 	}
 	eq(t, "failed", lsRow(t, e, "app#2"), "app#2\topen\t-\t-\tsecond")
 	ops[0].LastError = nil
-	e.app().saveOp(ops[0])
+	e.app().mirror().saveOp(ops[0])
 	eq(t, "retry ok", lsRow(t, e, "app#2"), "app#2\tclosed\t-\t-\tsecond")
 	e.run("outbox", "drop", ops[0].OpID)
 	eq(t, "dropped", lsRow(t, e, "app#2"), "app#2\topen\t-\t-\tsecond")

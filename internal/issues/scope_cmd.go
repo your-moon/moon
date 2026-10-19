@@ -2,8 +2,6 @@ package issues
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -88,8 +86,7 @@ func (a *App) mirrorHas(short, ident string) bool {
 			return true
 		}
 	}
-	_, err := os.Stat(filepath.Join(a.Home, short, ident+".md"))
-	return err == nil
+	return a.mirror().hasIssueFile(short, ident)
 }
 
 // scopeHeader is the line a terminal gets above every list.

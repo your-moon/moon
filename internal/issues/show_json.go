@@ -2,7 +2,6 @@ package issues
 
 import (
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -18,7 +17,7 @@ func (a *App) showNode(short, ident, ref string, ops []*Op) (*issueNode, error) 
 		}
 		return nil, die1("no such local issue %s", ref)
 	}
-	n, _, err := loadLocalIssue(filepath.Join(a.Home, short, ident+".md"))
+	n, _, err := loadLocalIssue(a.mirror().issueFileIdent(short, ident))
 	if err == nil {
 		return n, nil
 	}
