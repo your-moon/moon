@@ -118,7 +118,9 @@ func (a *App) effectiveBody(ref, short, ident string) (string, error) {
 		}
 	}
 	e := &eff{body: n.Body}
-	applyOps(e, pending)
+	if err := applyOps(e, pending); err != nil {
+		return "", err
+	}
 	return e.body, nil
 }
 

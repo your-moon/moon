@@ -185,6 +185,10 @@ func (a *App) applyLocalOnly(kind, ref string, args map[string]any) error {
 	if err != nil {
 		return die1("no such issue %s", ref)
 	}
+	k, err := kindOf(kind)
+	if err != nil {
+		return err
+	}
 	return a.withLock(".pull.lock", func() error {
 		path := a.issuePath(short, num)
 		node, comments, err := loadLocalIssue(path)
@@ -203,48 +207,8 @@ func (a *App) applyLocalOnly(kind, ref string, args map[string]any) error {
 			}
 			comments += fmt.Sprintf("\n### local · %s · id %d\n\n%s\n", a.stamp(), next, normBody(body))
 		}
-		switch kind {
-		case "comment":
-			addComment(argStr(args, "body"))
-		case "close":
-			node.State = "CLOSED"
-			r := "COMPLETED"
-			if argStr(args, "reason") == "not_planned" {
-				r = "NOT_PLANNED"
-			}
-			node.StateReason = &r
-			if c := argStr(args, "comment"); c != "" {
-				addComment(c)
-			}
-		case "reopen":
-			node.State, node.StateReason = "OPEN", nil
-		case "label":
-			e := &eff{labels: nil}
-			for _, l := range node.Labels.Nodes {
-				e.labels = append(e.labels, l.Name)
-			}
-			applyOps(e, []*Op{{Op: "label", Args: args}})
-			node.Labels.Nodes = nil
-			for _, l := range e.labels {
-				node.Labels.Nodes = append(node.Labels.Nodes, struct {
-					Name string `json:"name"`
-				}{l})
-			}
-		case "milestone":
-			if t := argStr(args, "title"); t == "none" || t == "" {
-				node.Milestone = nil
-			} else {
-				node.Milestone = &struct {
-					Title string `json:"title"`
-				}{t}
-			}
-		case "edit":
-			if t, ok := args["title"].(string); ok {
-				node.Title = t
-			}
-			if b, ok := args["body"].(string); ok {
-				node.Body = b
-			}
+		if err := k.applyLocal(&localEdit{node: node, add: addComment}, args); err != nil {
+			return err
 		}
 		node.UpdatedAt = a.stamp()
 		if err := atomicWrite(path, renderIssue(node)+comments, false); err != nil {

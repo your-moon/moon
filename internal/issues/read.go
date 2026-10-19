@@ -153,77 +153,7 @@ type eff struct {
 	labels                        []string
 }
 
-func applyOps(e *eff, ops []*Op) {
-	for _, o := range ops {
-		switch o.Op {
-		case "close":
-			e.state = "closed"
-		case "reopen":
-			e.state = "open"
-		case "label":
-			rm, add := argList(o.Args, "remove"), argList(o.Args, "add")
-			var nl []string
-			for _, l := range e.labels {
-				if !contains(rm, l) {
-					nl = append(nl, l)
-				}
-			}
-			for _, l := range add {
-				if !contains(e.labels, l) {
-					nl = append(nl, l)
-				}
-			}
-			e.labels = nl
-		case "milestone":
-			if t := argStr(o.Args, "title"); t == "none" {
-				e.milestone = ""
-			} else {
-				e.milestone = t
-			}
-		case "edit":
-			if t, ok := o.Args["title"].(string); ok {
-				e.title = t
-			}
-			if t, ok := o.Args["body"].(string); ok {
-				e.body = t
-			}
-		}
-	}
-}
-
 func oneLine(s string) string { return strings.ReplaceAll(pyStrip(s), "\n", " ") }
-
-func describe(o *Op) string {
-	switch o.Op {
-	case "comment":
-		return "comment [" + o.OpID + "]: " + trunc(oneLine(argStr(o.Args, "body")), 300)
-	case "close":
-		reason := argStr(o.Args, "reason")
-		if reason == "" {
-			reason = "completed"
-		}
-		s := "close (" + reason + ")"
-		if c := argStr(o.Args, "comment"); c != "" {
-			s += " + comment: " + c
-		}
-		return s
-	case "label":
-		return "label +" + strings.Join(argList(o.Args, "add"), ",") + " -" + strings.Join(argList(o.Args, "remove"), ",")
-	case "milestone":
-		return "milestone -> " + argStr(o.Args, "title")
-	case "label_new":
-		return "create label " + argStr(o.Args, "name")
-	case "edit":
-		var p []string
-		for _, x := range []string{"title", "body"} {
-			if _, ok := o.Args[x]; ok {
-				p = append(p, x)
-			}
-		}
-		return "edit " + strings.Join(p, ", ")
-	}
-	return o.Op
-}
 
 const liveNote = "(fetched live: older than %g days, not kept locally)"
 
@@ -292,13 +222,9 @@ func (a *App) cmdShow(o *Opts) error {
 		}
 		t := nw.Args
 		e := &eff{title: argStr(t, "title"), state: "open", labels: argList(t, "labels"), milestone: argStr(t, "milestone"), body: argStr(t, "body")}
-		var rest []*Op
-		for _, op := range pending {
-			if op.Op != "new" {
-				rest = append(rest, op)
-			}
+		if err := applyOps(e, pending); err != nil {
+			return err
 		}
-		applyOps(e, rest)
 		a.printf("ref: %s (local, pending sync: not on GitHub yet)\ntitle: %s\nstate: %s\nlabels: %s\nmilestone: %s\n\n%s\n",
 			ref, e.title, e.state, strings.Join(e.labels, ","), orDash(e.milestone), e.body)
 	} else {
@@ -348,7 +274,9 @@ func (a *App) cmdShow(o *Opts) error {
 			h = map[string]any{}
 		}
 		e := &eff{title: hStr(h, "title"), state: hStr(h, "state"), labels: hList(h, "labels"), milestone: hStr(h, "milestone")}
-		applyOps(e, pending)
+		if err := applyOps(e, pending); err != nil {
+			return err
+		}
 		if pretty {
 			if len(pending) > 0 {
 				e.title += " (pending sync)"
@@ -649,13 +577,7 @@ func (a *App) issueFacts(short, ident string, pending []*Op) (state string, labe
 			}
 		}
 	}
-	var rest []*Op
-	for _, op := range pending {
-		if op.Op != "new" {
-			rest = append(rest, op)
-		}
-	}
-	applyOps(e, rest)
+	applyPending(e, pending)
 	return e.state, e.labels
 }
 

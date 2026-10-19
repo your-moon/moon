@@ -25,13 +25,8 @@ var pushBatch = 20
 const minBatch = 3
 
 func (a *App) batchable(o *Op) bool {
-	switch o.Op {
-	case "comment":
-		if o.Inflight {
-			return false
-		}
-	case "close", "reopen", "label", "milestone", "edit":
-	default:
+	k := kindOrNil(o.Op)
+	if k == nil || k.mutate == nil || (k.batchOK != nil && !k.batchOK(o)) {
 		return false
 	}
 	_, ident, err := a.parseRef(o.Ref)
@@ -184,66 +179,14 @@ func (a *App) mutationsFor(short string, o *Op, c *idCache) ([]mutation, error) 
 	if id == "" {
 		return nil, &GhError{Msg: fmt.Sprintf("graphql: no issue %s#%s on GitHub", short, ident)}
 	}
-	args := o.Args
-	switch o.Op {
-	case "comment":
-		return []mutation{{"c", "addComment", "AddCommentInput", map[string]any{"subjectId": id,
-			"body": pyRstrip(argStr(args, "body")) + "\n\n<!-- op-id: " + o.OpID + " -->"}}}, nil
-	case "close":
-		reason := "COMPLETED"
-		if argStr(args, "reason") == "not_planned" {
-			reason = "NOT_PLANNED"
-		}
-		var ms []mutation
-		if cm := argStr(args, "comment"); cm != "" {
-			ms = append(ms, mutation{"c", "addComment", "AddCommentInput", map[string]any{"subjectId": id, "body": cm}})
-		}
-		return append(ms, mutation{"x", "closeIssue", "CloseIssueInput", map[string]any{"issueId": id, "stateReason": reason}}), nil
-	case "reopen":
-		return []mutation{{"x", "reopenIssue", "ReopenIssueInput", map[string]any{"issueId": id}}}, nil
-	case "label":
-		var ms []mutation
-		var add, rm []string
-		for _, l := range argList(args, "add") {
-			lid := c.label[short+"\x00"+l]
-			if lid == "" {
-				return nil, &GhError{Msg: fmt.Sprintf("graphql: label %q not found in %s", l, short)}
-			}
-			add = append(add, lid)
-		}
-		for _, l := range argList(args, "remove") {
-			if lid := c.label[short+"\x00"+l]; lid != "" { // not in the repo: it cannot be on the issue
-				rm = append(rm, lid)
-			}
-		}
-		if len(add) > 0 {
-			ms = append(ms, mutation{"a", "addLabelsToLabelable", "AddLabelsToLabelableInput", map[string]any{"labelableId": id, "labelIds": add}})
-		}
-		if len(rm) > 0 {
-			ms = append(ms, mutation{"r", "removeLabelsFromLabelable", "RemoveLabelsFromLabelableInput", map[string]any{"labelableId": id, "labelIds": rm}})
-		}
-		return ms, nil
-	case "milestone":
-		in := map[string]any{"id": id, "milestoneId": nil}
-		if t := argStr(args, "title"); t != "none" {
-			mid := c.mstone[short+"\x00"+t]
-			if mid == "" {
-				return nil, &GhError{Msg: fmt.Sprintf("graphql: milestone %q not found in %s", t, short)}
-			}
-			in["milestoneId"] = mid
-		}
-		return []mutation{{"m", "updateIssue", "UpdateIssueInput", in}}, nil
-	case "edit":
-		in := map[string]any{"id": id}
-		if t, ok := args["title"]; ok {
-			in["title"] = t
-		}
-		if b, ok := args["body"]; ok {
-			in["body"] = b
-		}
-		return []mutation{{"e", "updateIssue", "UpdateIssueInput", in}}, nil
+	k, err := kindOf(o.Op)
+	if err != nil {
+		return nil, err
 	}
-	return nil, &GhError{Msg: "unknown op " + o.Op}
+	if k.mutate == nil {
+		return nil, &GhError{Msg: "graphql: " + o.Op + " is not batchable"}
+	}
+	return k.mutate(short, o, id, c)
 }
 
 // sendBatch sends ops (one repo, one per order key) and returns one result per op, in order.

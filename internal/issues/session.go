@@ -196,7 +196,7 @@ func (s *Session) load(withCreated bool) Snapshot {
 					pend = append(pend, op)
 				}
 			}
-			applyOps(e, pend)
+			applyPending(e, pend)
 			it := Item{Ref: ref, Alias: short, Num: n, State: e.state, Milestone: e.milestone, Labels: e.labels, Updated: r[4],
 				Title: e.title, Pending: len(pend)}
 			if withCreated {
@@ -214,13 +214,7 @@ func (s *Session) load(withCreated bool) Snapshot {
 			}
 			t := op.Args
 			e := &eff{title: argStr(t, "title"), state: "open", labels: argList(t, "labels"), milestone: argStr(t, "milestone")}
-			var rest []*Op
-			for _, o := range byRef[op.Ref] {
-				if o.Op != "new" {
-					rest = append(rest, o)
-				}
-			}
-			applyOps(e, rest)
+			applyPending(e, byRef[op.Ref])
 			it := Item{Ref: op.Ref, Alias: short, State: e.state, Milestone: e.milestone, Labels: e.labels, Updated: op.TS, Created: op.TS,
 				Title: e.title, Pending: len(byRef[op.Ref])}
 			it.Work = we.statusBody(op.Ref, short, 0, e.state, e.labels, argStr(t, "body"))
@@ -302,7 +296,9 @@ func (s *Session) Detail(ref string) (Detail, error) {
 			d.Body = strings.TrimLeft(stripFrontMatter(text), "\n")
 		}
 	}
-	applyOps(e, pend)
+	if err := applyOps(e, pend); err != nil {
+		return d, err
+	}
 	d.Title, d.State, d.Milestone, d.Labels = e.title, e.state, e.milestone, e.labels
 	num, _ := strconv.Atoi(ident)
 	d.Work = a.newWorkEnv().status(ref, short, num, e.state, e.labels)

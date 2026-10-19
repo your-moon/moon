@@ -5,12 +5,6 @@ import (
 	"strings"
 )
 
-// outboxEditable is, per kind of queued write, the fields `outbox edit` may change.
-var outboxEditable = map[string][]string{
-	"new": {"title", "body", "label", "milestone"}, "edit": {"title", "body"}, "comment": {"body"},
-	"label": {"add", "remove"}, "milestone": {"milestone"},
-}
-
 // editFields are the fields this command line asks to change. --body-file counts as body.
 func editFields(o *Opts) []string {
 	var out []string
@@ -35,7 +29,11 @@ func (a *App) cmdOutboxEdit(o *Opts) error {
 	if len(fields) == 0 {
 		return die("outbox edit needs a field to change: --title, --body/--body-file, --label, --milestone, --add or --remove")
 	}
-	allowed := outboxEditable[op.Op]
+	k, err := kindOf(op.Op)
+	if err != nil {
+		return err
+	}
+	allowed := k.editable
 	for _, f := range fields {
 		if !contains(allowed, f) {
 			return die("%s is a %s write: it can change %s, not --%s", shortOpID(op.OpID), op.Op, orDash(strings.Join(allowed, ", ")), f)
@@ -128,12 +126,13 @@ func (a *App) editBody(op *Op, o *Opts, args map[string]any) error {
 	if err != nil {
 		return err
 	}
-	switch op.Op {
-	case "new":
-		body = pyRstrip(body) + "\n\n<!-- local-id: " + argStr(op.Args, "local_id") + " -->"
-	case "comment":
-		if pyStrip(body) == "" {
-			return die("a comment needs a body; drop it with: moon issues outbox drop %s", shortOpID(op.OpID))
+	k, err := kindOf(op.Op)
+	if err != nil {
+		return err
+	}
+	if k.bodyEdit != nil {
+		if body, err = k.bodyEdit(op, body); err != nil {
+			return err
 		}
 	}
 	args["body"] = body

@@ -77,7 +77,9 @@ func (a *App) showJSON(ref, short, ident string) error {
 	if n.Milestone != nil {
 		e.milestone = n.Milestone.Title
 	}
-	applyOps(e, pending)
+	if err := applyOps(e, pending); err != nil {
+		return err
+	}
 	assignees := []string{}
 	for _, u := range n.Assignees.Nodes {
 		assignees = append(assignees, u.Login)
