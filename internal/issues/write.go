@@ -100,110 +100,21 @@ func (a *App) findByMarker(short, lid, opTS string) (int, error) {
 
 // execute runs one op. Returns the new issue number for a create, else 0.
 func (a *App) execute(op *Op) (int, error) {
-	if isMsOp(op.Op) {
-		return 0, a.executeMs(op)
+	k, err := kindOf(op.Op)
+	if err != nil {
+		return 0, err
 	}
-	if op.Op == "label_new" {
-		return 0, a.executeLabelNew(op)
+	if k.family != famIssue {
+		return k.send(a, op, sendCtx{})
 	}
 	short, ident, err := a.parseRef(op.Ref)
 	if err != nil {
 		return 0, err
 	}
-	repo, args := a.repoFull(short), op.Args
-	switch op.Op {
-	case "new":
-		n, err := a.findByMarker(short, argStr(args, "local_id"), op.TS)
-		if err != nil {
-			return 0, err
-		}
-		if n != 0 {
-			return n, nil
-		}
-		ga := []string{"issue", "create", "-R", repo, "--title", argStr(args, "title"), "--body-file", "-"}
-		for _, l := range argList(args, "labels") {
-			ga = append(ga, "--label", l)
-		}
-		if m := argStr(args, "milestone"); m != "" {
-			ga = append(ga, "--milestone", m)
-		}
-		out, err := a.gh(ga, argStr(args, "body"))
-		if err != nil {
-			return 0, err
-		}
-		m := issueURLRe.FindStringSubmatch(out)
-		if m == nil {
-			return 0, &GhError{Msg: fmt.Sprintf("create printed no issue url: %q", trunc(out, 200))}
-		}
-		n, _ = strconv.Atoi(m[1])
-		return n, nil
-	}
-	if isLocalIdent(ident) {
+	if !k.creates && isLocalIdent(ident) {
 		return 0, &GhError{Msg: fmt.Sprintf("unresolved local ref %s (its create has not landed)", op.Ref)}
 	}
-	n := ident
-	switch op.Op {
-	case "comment":
-		marker := "<!-- op-id: " + op.OpID + " -->"
-		if op.Inflight { // a previous attempt may have posted it before we could record that
-			bodies, err := a.gh([]string{"api", fmt.Sprintf("repos/%s/issues/%s/comments", repo, n), "--paginate", "--jq", ".[].body"}, "")
-			if err != nil {
-				return 0, err
-			}
-			if strings.Contains(bodies, marker) {
-				return 0, nil
-			}
-		}
-		_, err := a.gh([]string{"issue", "comment", n, "-R", repo, "--body-file", "-"}, pyRstrip(argStr(args, "body"))+"\n\n"+marker)
-		return 0, err
-	case "close":
-		reason := "completed"
-		if argStr(args, "reason") == "not_planned" {
-			reason = "not planned"
-		}
-		ga := []string{"issue", "close", n, "-R", repo, "--reason", reason}
-		if c := argStr(args, "comment"); c != "" {
-			ga = append(ga, "--comment", c)
-		}
-		_, err := a.gh(ga, "")
-		return 0, err
-	case "reopen":
-		_, err := a.gh([]string{"issue", "reopen", n, "-R", repo}, "")
-		return 0, err
-	case "label":
-		ga := []string{"issue", "edit", n, "-R", repo}
-		if l := argList(args, "add"); len(l) > 0 {
-			ga = append(ga, "--add-label", strings.Join(l, ","))
-		}
-		if l := argList(args, "remove"); len(l) > 0 {
-			ga = append(ga, "--remove-label", strings.Join(l, ","))
-		}
-		_, err := a.gh(ga, "")
-		return 0, err
-	case "milestone":
-		ga := []string{"issue", "edit", n, "-R", repo}
-		if argStr(args, "title") == "none" {
-			ga = append(ga, "--remove-milestone")
-		} else {
-			ga = append(ga, "--milestone", argStr(args, "title"))
-		}
-		_, err := a.gh(ga, "")
-		return 0, err
-	case "edit":
-		ga := []string{"issue", "edit", n, "-R", repo}
-		if t, ok := args["title"]; ok {
-			ts, _ := t.(string)
-			ga = append(ga, "--title", ts)
-		}
-		body, hasBody := args["body"]
-		if hasBody {
-			ga = append(ga, "--body-file", "-")
-		}
-		bs, _ := body.(string)
-		_, err := a.gh(ga, bs)
-		return 0, err
-	}
-	return 0, &GhError{Msg: "unknown op " + op.Op}
+	return k.send(a, op, sendCtx{short: short, ident: ident, repo: a.repoFull(short)})
 }
 
 // ---------- push ----------

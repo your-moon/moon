@@ -137,8 +137,6 @@ func (a *App) msLocalIDs(short string) map[int]string {
 	return out
 }
 
-func isMsOp(op string) bool { return strings.HasPrefix(op, "ms_") }
-
 // msRecs is everything known about the milestones of one alias: the file, then titles that only the
 // issues mention, then (GitHub repos) the queued writes applied on top.
 func (a *App) msRecs(short string) []msRec {
@@ -207,24 +205,8 @@ func applyMsChange(r *msRec, op string, args map[string]any) {
 	if r.key == "" {
 		r.key = r.Title
 	}
-	switch op {
-	case "ms_close":
-		r.State = "closed"
-	case "ms_reopen":
-		r.State = "open"
-	case "ms_edit":
-		if t, ok := args["new_title"].(string); ok {
-			r.Title = t
-		}
-		if d, ok := args["due"].(string); ok {
-			if d == "none" {
-				d = ""
-			}
-			r.Due = d
-		}
-		if d, ok := args["description"].(string); ok {
-			r.Desc = d
-		}
+	if k := kindOrNil(op); k != nil {
+		k.applyMs(r, args)
 	}
 }
 
@@ -242,28 +224,21 @@ func (a *App) msCounts(short string) (closed, open, queued map[string]int) {
 			open[r[2]]++
 		}
 	}
-	pm := map[string]string{} // queued new issue -> its milestone
+	pm := map[string]*eff{} // queued new issue -> its view with the later queued writes applied
 	var order []string
 	for _, op := range a.loadOutbox() {
 		if shortOf(op.Ref) != short {
 			continue
 		}
-		switch op.Op {
-		case "new":
-			pm[op.Ref] = argStr(op.Args, "milestone")
+		if op.Op == "new" {
+			pm[op.Ref] = &eff{milestone: argStr(op.Args, "milestone")}
 			order = append(order, op.Ref)
-		case "milestone":
-			if _, ok := pm[op.Ref]; ok {
-				t := argStr(op.Args, "title")
-				if t == "none" {
-					t = ""
-				}
-				pm[op.Ref] = t
-			}
+		} else if e, ok := pm[op.Ref]; ok {
+			_ = applyOps(e, []*Op{op}) // a kind we do not know is reported by push; it changes no count
 		}
 	}
 	for _, ref := range order {
-		if t := pm[ref]; t != "" {
+		if t := pm[ref].milestone; t != "" {
 			queued[t]++
 		}
 	}

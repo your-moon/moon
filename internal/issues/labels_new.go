@@ -78,11 +78,8 @@ func (a *App) executeLabelNew(op *Op) error {
 func labelWaiting(ops []*Op, i int) bool {
 	o := ops[i]
 	var used []string
-	switch o.Op {
-	case "new":
-		used = argList(o.Args, "labels")
-	case "label":
-		used = argList(o.Args, "add")
+	if k := kindOrNil(o.Op); k != nil && k.labelsUsed != nil {
+		used = k.labelsUsed(o)
 	}
 	if len(used) == 0 {
 		return false

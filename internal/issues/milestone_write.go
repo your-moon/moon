@@ -356,15 +356,8 @@ func (a *App) msIssueTitle(ref, typed string) (string, error) {
 func msWaiting(ops []*Op, i int) bool {
 	o := ops[i]
 	title := ""
-	switch o.Op {
-	case "new":
-		title = argStr(o.Args, "milestone")
-	case "milestone":
-		if t := argStr(o.Args, "title"); t != "none" {
-			title = t
-		}
-	case "ms_edit", "ms_close", "ms_reopen":
-		title = argStr(o.Args, "title")
+	if k := kindOrNil(o.Op); k != nil && k.waitTitle != nil {
+		title = k.waitTitle(o)
 	}
 	if title == "" {
 		return false
@@ -394,46 +387,39 @@ func (a *App) appendLocalmap(short, id string, n int) error {
 	return err
 }
 
-// executeMs sends one milestone op to GitHub and then records the result in the mirror.
-func (a *App) executeMs(op *Op) error {
-	short := shortOf(op.Ref)
-	repo := a.repoFull(short)
+// msOpRepo is the alias and GitHub repo a milestone op is about.
+func (a *App) msOpRepo(op *Op) (short, repo string, err error) {
+	short = shortOf(op.Ref)
+	repo = a.repoFull(short)
 	if repo == "" {
-		return &GhError{Msg: fmt.Sprintf("no GitHub repo behind alias %s", short)}
+		return "", "", &GhError{Msg: fmt.Sprintf("no GitHub repo behind alias %s", short)}
+	}
+	return short, repo, nil
+}
+
+// executeMsNew sends a milestone create.
+func (a *App) executeMsNew(op *Op) error {
+	short, repo, err := a.msOpRepo(op)
+	if err != nil {
+		return err
+	}
+	return a.execMsNew(short, repo, op)
+}
+
+// executeMsChange sends a close, reopen or edit of a milestone to GitHub (change fills the request from the
+// op's args) and then records the result in the mirror.
+func (a *App) executeMsChange(op *Op, change func(ch *MilestoneChange, args map[string]any)) error {
+	short, repo, err := a.msOpRepo(op)
+	if err != nil {
+		return err
 	}
 	args := op.Args
-	if op.Op == "ms_new" {
-		return a.execMsNew(short, repo, op)
-	}
 	num, err := a.msNumber(short, repo, args)
 	if err != nil {
 		return err
 	}
 	ch := MilestoneChange{}
-	switch op.Op {
-	case "ms_close":
-		s := "closed"
-		ch.State = &s
-	case "ms_reopen":
-		s := "open"
-		ch.State = &s
-	case "ms_edit":
-		if t, ok := args["new_title"].(string); ok {
-			ch.Title = &t
-		}
-		if d, ok := args["due"].(string); ok {
-			if d == "none" {
-				ch.ClearDue = true
-			} else {
-				ch.Due = &d
-			}
-		}
-		if d, ok := args["description"].(string); ok {
-			ch.Description = &d
-		}
-	default:
-		return &GhError{Msg: "unknown op " + op.Op}
-	}
+	change(&ch, args)
 	if err := a.GH.UpdateMilestone(repo, num, ch); err != nil {
 		return err
 	}

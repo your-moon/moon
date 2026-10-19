@@ -42,7 +42,7 @@ func (a *App) overlayIndex(short string, rows [][]string) [][]string {
 			continue
 		}
 		e := &eff{title: r[5], state: r[1], milestone: r[2], labels: splitLabels(r[3])}
-		applyOps(e, ops)
+		applyPending(e, ops)
 		nr := append([]string(nil), r...)
 		nr[1], nr[2], nr[3], nr[5] = e.state, e.milestone, strings.Join(e.labels, ","), clean(e.title)
 		out[i] = nr
