@@ -459,7 +459,7 @@ func (s *Session) Milestones() []MilestoneRow {
 
 // SetMilestone queues a milestone change like `moon issues milestone <ref> <title>`; title "none" clears it.
 func (s *Session) SetMilestone(ref, title string) error {
-	_, err := s.run(func(a *App) error { return a.cmdSimple("milestone")(newOpts([]string{ref, title})) })
+	_, err := s.app.setMilestone(ref, title)
 	return err
 }
 

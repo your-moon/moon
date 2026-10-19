@@ -432,6 +432,15 @@ func (a *App) comment(ref, body string) (opResult, error) {
 	return a.queueOp("comment", ref, map[string]any{"body": body})
 }
 
+// setMilestone queues a milestone change on ref; title "none" clears it.
+func (a *App) setMilestone(ref, title string) (opResult, error) {
+	t, err := a.msIssueTitle(ref, title)
+	if err != nil {
+		return opResult{}, err
+	}
+	return a.queueOp("milestone", ref, map[string]any{"title": t})
+}
+
 func (a *App) cmdSimple(kind string) func(o *Opts) error {
 	return func(o *Opts) error {
 		args := map[string]any{}
@@ -468,11 +477,12 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			}
 			args = la
 		case "milestone":
-			t, err := a.msIssueTitle(o.Pos[0], o.Pos[1])
+			r, err := a.setMilestone(o.Pos[0], o.Pos[1])
 			if err != nil {
 				return err
 			}
-			args["title"] = t
+			a.printf("%s", r.line())
+			return nil
 		case "edit":
 			if o.Seen["title"] {
 				args["title"] = o.str("title")
