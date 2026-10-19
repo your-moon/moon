@@ -706,7 +706,7 @@ func (a *App) cmdSync(o *Opts) error {
 	// writes are never sent (pushRepos sends everything queued when remote is every repo)
 	rc := a.doSync(remote, o.B["quiet"], a.Out, remote)
 	if o.B["quiet"] { // the marker belongs to the background sync that this process is
-		a.releaseSyncMarker(remote)
+		a.EndBackgroundSync(remote)
 	}
 	if rc != 0 {
 		return &exitError{Code: rc}

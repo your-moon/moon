@@ -1,16 +1,13 @@
 package issues
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -544,14 +541,14 @@ func Main(args []string, e Env) int {
 	a.Color, a.Forced = caps.On, caps.Forced
 	a.St = NewStyler(caps, e.Getenv, cfg.Colors)
 	if sp.read {
-		if err := a.autosync(name, o, cfgPath); err != nil {
+		if err := a.BeforeRead(name, o); err != nil {
 			fmt.Fprintln(e.Err, err)
 			return 2
 		}
 	}
 	a.printScopeHeader(sp, o)
 	if !sp.read && !noAutopush[name] {
-		defer a.kickPush() // after the write is queued, even when the command then fails
+		defer a.AfterWrite() // after the write is queued, even when the command then fails
 	}
 	if err := sp.run(a, o); err != nil {
 		if ee, ok := err.(*exitError); ok {
@@ -564,116 +561,6 @@ func Main(args []string, e Env) int {
 		return 1
 	}
 	return 0
-}
-
-// ---------- auto-refresh ----------
-
-func (a *App) mirrorAge(shorts []string) (float64, bool) {
-	var max float64
-	for _, s := range shorts {
-		b, err := readText(filepath.Join(a.Home, s, "lastpull"))
-		t, perr := strconv.Atoi(pyStrip(b))
-		if err != nil || perr != nil {
-			return 0, false
-		}
-		if age := float64(a.Now().UnixNano())/1e9 - float64(t); age > max {
-			max = age
-		}
-	}
-	return max, true
-}
-
-func (a *App) takeAutosyncMarker() bool {
-	os.MkdirAll(a.Home, 0o755)
-	path := filepath.Join(a.Home, ".autosync")
-	for i := 0; i < 2; i++ {
-		if err := createExcl(path, strconv.Itoa(os.Getpid())+"\n"); err == nil { // M_asmarker
-			return true
-		}
-		st, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		if time.Since(st.ModTime()).Seconds() <= autosyncMarkerStale { // M_asstale
-			return false
-		}
-		gone := path + ".stale." + uuid4()
-		if os.Rename(path, gone) == nil {
-			os.Remove(gone)
-		}
-	}
-	return false
-}
-
-func (a *App) autosync(name string, o *Opts, cfgPath string) error {
-	shorts := a.shortsFor(o)
-	if name == "show" || name == "pr show" {
-		s, _, err := a.parseRef(o.Pos[0])
-		if err != nil {
-			return err
-		}
-		shorts = []string{s}
-	}
-	shorts, _ = a.splitLocal(shorts) // local-only aliases have nothing to refresh
-	if len(shorts) == 0 {
-		return nil
-	}
-	if o.B["fresh"] { // M_fresh
-		a.doSync(shorts, false, a.Err, nil)
-		return nil
-	}
-	if off, _ := a.autosyncOff(); off {
-		return nil
-	}
-	age, ok := a.mirrorAge(shorts)
-	if ok && age <= autosyncMaxAge { // M_asage
-		return nil
-	}
-	if !a.takeAutosyncMarker() {
-		return nil
-	}
-	if err := a.SpawnSync(a); err != nil {
-		os.Remove(filepath.Join(a.Home, ".autosync"))
-		return nil
-	}
-	if ok {
-		fmt.Fprintf(a.Err, "(mirror %d min old; refreshing in background)\n", int(age)/60)
-	} else {
-		fmt.Fprintf(a.Err, "(mirror never pulled, so old; refreshing in background)\n")
-	}
-	return nil
-}
-
-// spawnSync starts `moon issues sync --quiet` fully detached, output appended to autosync.log.
-func spawnSync(a *App) error {
-	if f := a.Environ("ISSUES_TEST_SPAWN"); f != "" {
-		fh, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return err
-		}
-		fh.WriteString("spawn\n")
-		return fh.Close()
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if strings.HasSuffix(self, ".test") { // a go test binary would re-run its tests detached, and those spawn again
-		return errors.New("background sync: not from a test binary")
-	}
-	log, err := os.OpenFile(filepath.Join(a.Home, "autosync.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer log.Close()
-	cmd := exec.Command(self, "issues", "--dir", a.Home, "sync", "--quiet", "--all")
-	cmd.Stdout, cmd.Stderr = log, log
-	cmd.Env = append(os.Environ(), "ISSUES_NO_AUTOSYNC=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	return cmd.Process.Release()
 }
 
 // isOutboxSub: the words that follow `moon issues outbox`.

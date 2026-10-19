@@ -20,11 +20,6 @@ import (
 	"unicode"
 )
 
-const (
-	autosyncMaxAge      = 600
-	autosyncMarkerStale = 120
-)
-
 // App carries the mirror location and every side-effecting dependency.
 type App struct {
 	Home    string
