@@ -367,7 +367,7 @@ func (s *Session) Reopen(ref string) error {
 
 // Comment queues a comment.
 func (s *Session) Comment(ref, body string) error {
-	_, err := s.run(func(a *App) error { return a.cmdSimple("comment")(newOpts([]string{ref}, "body", body)) })
+	_, err := s.app.comment(ref, body)
 	return err
 }
 

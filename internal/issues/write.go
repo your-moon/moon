@@ -424,6 +424,14 @@ func (a *App) reopen(ref string) (opResult, error) {
 	return a.queueOp("reopen", ref, map[string]any{})
 }
 
+// comment queues a comment on ref; a blank body is refused.
+func (a *App) comment(ref, body string) (opResult, error) {
+	if pyStrip(body) == "" {
+		return opResult{}, die("comment needs --body or --body-file")
+	}
+	return a.queueOp("comment", ref, map[string]any{"body": body})
+}
+
 func (a *App) cmdSimple(kind string) func(o *Opts) error {
 	return func(o *Opts) error {
 		args := map[string]any{}
@@ -433,10 +441,12 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			if err != nil {
 				return err
 			}
-			if pyStrip(b) == "" {
-				return die("comment needs --body or --body-file")
+			r, err := a.comment(o.Pos[0], b)
+			if err != nil {
+				return err
 			}
-			args["body"] = b
+			a.printf("%s", r.line())
+			return nil
 		case "close":
 			r, err := a.closeIssue(o.Pos[0], o.str("reason"), o.str("comment"), o.str("agent"), !o.Seen["agent"])
 			if err != nil {
