@@ -75,7 +75,7 @@ var helpTexts = map[string]helpEntry{
 		[2]string{"moon issues outbox retry 3f9a1c2b", "moon issues outbox ls   # shows which writes sync gave up on, and why"}},
 	"outbox drop": {"remove a queued write; a queued new issue with writes queued on it needs --cascade", "moon issues outbox drop <op> [--cascade]",
 		[2]string{"moon issues outbox drop 3f9a21c0", "moon issues outbox drop 3f9a21c0 --cascade   # also drop the writes queued on that new issue"}},
-	"push": {"send queued writes to GitHub", "moon issues push [--repo R]",
+	"push": {"send queued writes to GitHub (comments, edits, labels, closes and the like on existing issues go out as batched GraphQL mutations, up to 20 per request)", "moon issues push [--repo R]",
 		[2]string{"moon issues push", "moon issues push -R app"}},
 	"pull": {"refresh the mirror from GitHub: only what changed since the last pull (one request); --full re-reads everything and also drops deleted or transferred issues, which a delta cannot see", "moon issues pull [--repo R] [--full]",
 		[2]string{"moon issues pull", "moon issues pull -R app --full"}},

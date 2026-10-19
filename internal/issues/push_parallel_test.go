@@ -60,6 +60,7 @@ func (l *latencyGH) index(s string) int {
 }
 
 func TestPushOverlapsIndependentWrites(t *testing.T) {
+	restPush(t)
 	e := newEnv(t)
 	e.tick = true
 	e.gh.parallel = true
@@ -78,6 +79,7 @@ func TestPushOverlapsIndependentWrites(t *testing.T) {
 }
 
 func TestPushKeepsOneIssuesWritesInOrder(t *testing.T) {
+	restPush(t)
 	e := newEnv(t)
 	e.tick = true
 	e.gh.parallel = true
@@ -109,6 +111,7 @@ func TestPushKeepsOneIssuesWritesInOrder(t *testing.T) {
 }
 
 func TestPushFailureStaysPerOp(t *testing.T) {
+	restPush(t)
 	e := newEnv(t)
 	e.tick = true
 	e.gh.parallel = true
