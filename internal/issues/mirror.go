@@ -56,40 +56,6 @@ type issueNode struct {
 	} `json:"comments"`
 }
 
-const issueFields = `number title body state stateReason url createdAt updatedAt id
-  author{login} milestone{title}
-  assignees(first:20){nodes{login}} labels(first:50){nodes{name}}
-  comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId createdAt body author{login}}}`
-
-var qIssues = `query($owner:String!,$name:String!,$since:DateTime,$after:String,$withMs:Boolean!){
- repository(owner:$owner,name:$name){
-  labels(first:100) @include(if:$withMs){nodes{name color description}}
-  milestones(first:100,states:[OPEN,CLOSED]) @include(if:$withMs){nodes{number title state dueOn description updatedAt}}
-  pullRequests(first:100,orderBy:{field:UPDATED_AT,direction:DESC}) @include(if:$withMs){
-   pageInfo{hasNextPage endCursor}
-   nodes{` + prFields + `}}
-  issues(first:100,after:$after,orderBy:{field:UPDATED_AT,direction:ASC},filterBy:{since:$since}){
-   pageInfo{hasNextPage endCursor}
-   nodes{` + issueFields + `}}}}`
-
-const qComments = `query($id:ID!,$after:String){node(id:$id){... on Issue{comments(first:100,after:$after){
-  pageInfo{hasNextPage endCursor} nodes{databaseId createdAt body author{login}}}}}}`
-
-var qIssue = `query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){` + issueFields + `}}}`
-
-const prFields = `number title body state isDraft headRefName headRefOid baseRefName createdAt mergedAt mergeCommit{oid}
-  author{login} updatedAt url closingIssuesReferences(first:20){nodes{number}}`
-
-var qPROne = `query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){pullRequest(number:$num){
-  ` + prFields + `}}}`
-
-const qPRs = `query($owner:String!,$name:String!,$after:String){
- repository(owner:$owner,name:$name){
-  pullRequests(first:100,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){
-   pageInfo{hasNextPage endCursor}
-   nodes{number title body state isDraft headRefName headRefOid baseRefName createdAt mergedAt mergeCommit{oid}
-     author{login} updatedAt url closingIssuesReferences(first:20){nodes{number}}}}}}`
-
 type prNode struct {
 	Number      int    `json:"number"`
 	Title       string `json:"title"`
@@ -452,7 +418,6 @@ type prPage struct {
 
 // pullPRs mirrors pull requests. first is page one when the issues query already fetched it (nil: ask for it).
 func (a *App) pullPRs(short string, full bool, first *prPage) (int, error) {
-	owner, name, _ := strings.Cut(a.repoFull(short), "/")
 	d := filepath.Join(a.Home, short)
 	if err := os.MkdirAll(filepath.Join(d, "pr"), 0o755); err != nil {
 		return 0, err
@@ -466,22 +431,17 @@ func (a *App) pullPRs(short string, full bool, first *prPage) (int, error) {
 		full = true
 	}
 	rows := a.readPRs(short)
-	var after any
+	var after string
 	maxu, changed, stop := cursor, 0, false
 	for !stop {
 		var page prPage
 		if first != nil {
 			page, first = *first, nil
 		} else {
-			var data struct {
-				Repository struct {
-					PullRequests prPage `json:"pullRequests"`
-				} `json:"repository"`
-			}
-			if err := a.gql(qPRs, map[string]any{"owner": owner, "name": name, "after": after}, &data); err != nil {
+			var err error
+			if page, err = a.GH.PullPRs(a.repoFull(short), after); err != nil {
 				return changed, err
 			}
-			page = data.Repository.PullRequests
 		}
 		var batch []*prNode
 		for _, n := range page.Nodes {
@@ -543,47 +503,34 @@ func (a *App) pullPRs(short string, full bool, first *prPage) (int, error) {
 func (a *App) fillComments(n *issueNode) error {
 	cm := n.Comments.PageInfo
 	for cm.HasNextPage {
-		var d struct {
-			Node struct {
-				Comments struct {
-					PageInfo pageInfo  `json:"pageInfo"`
-					Nodes    []comment `json:"nodes"`
-				} `json:"comments"`
-			} `json:"node"`
-		}
-		if err := a.gql(qComments, map[string]any{"id": n.ID, "after": cm.EndCursor}, &d); err != nil {
+		pg, err := a.GH.Comments(n.ID, cm.EndCursor)
+		if err != nil {
 			return err
 		}
-		n.Comments.Nodes = append(n.Comments.Nodes, d.Node.Comments.Nodes...)
-		cm = d.Node.Comments.PageInfo
+		n.Comments.Nodes = append(n.Comments.Nodes, pg.Nodes...)
+		cm = pg.PageInfo
 	}
 	n.Comments.PageInfo = pageInfo{}
 	return nil
 }
 
 func (a *App) fetchIssueLive(short, num string) (*issueNode, error) {
-	owner, name, _ := strings.Cut(a.repoFull(short), "/")
 	n, _ := strconv.Atoi(num)
-	var d struct {
-		Repository struct {
-			Issue *issueNode `json:"issue"`
-		} `json:"repository"`
-	}
-	if err := a.gql(qIssue, map[string]any{"owner": owner, "name": name, "num": n}, &d); err != nil {
+	issue, err := a.GH.Issue(a.repoFull(short), n)
+	if err != nil {
 		return nil, err
 	}
-	if d.Repository.Issue == nil {
+	if issue == nil {
 		return nil, &GhError{Msg: fmt.Sprintf("no such issue %s#%s", short, num)}
 	}
-	if err := a.fillComments(d.Repository.Issue); err != nil {
+	if err := a.fillComments(issue); err != nil {
 		return nil, err
 	}
-	return d.Repository.Issue, nil
+	return issue, nil
 }
 
 // pull mirrors one repo. Returns the number of files written.
 func (a *App) pull(short string, full bool) (int, error) {
-	owner, name, _ := strings.Cut(a.repoFull(short), "/")
 	wantFull := full
 	d := filepath.Join(a.Home, short)
 	if err := os.MkdirAll(d, 0o755); err != nil {
@@ -597,49 +544,23 @@ func (a *App) pull(short string, full bool) (int, error) {
 	if _, err := os.Stat(filepath.Join(d, "lastpull")); cursor == "" || err != nil {
 		full = true // no earlier pull to be a delta of
 	}
-	var since any
+	var since string
 	if !full {
 		since = cursor
 	}
-	var after any
+	var after string
 	first, maxu, changed := true, cursor, 0
 	seen := map[int]bool{}
 	touched := map[int]bool{} // files this pull wrote: the only index rows a delta has to re-read
 	var prFirst *prPage
 	for {
-		var data struct {
-			Repository struct {
-				Labels *struct {
-					Nodes []struct {
-						Name        string  `json:"name"`
-						Color       string  `json:"color"`
-						Description *string `json:"description"`
-					} `json:"nodes"`
-				} `json:"labels"`
-				Milestones struct {
-					Nodes []struct {
-						Number      int     `json:"number"`
-						Title       string  `json:"title"`
-						State       string  `json:"state"`
-						DueOn       *string `json:"dueOn"`
-						Description string  `json:"description"`
-						UpdatedAt   string  `json:"updatedAt"`
-					} `json:"nodes"`
-				} `json:"milestones"`
-				Issues struct {
-					PageInfo pageInfo     `json:"pageInfo"`
-					Nodes    []*issueNode `json:"nodes"`
-				} `json:"issues"`
-				PullRequests *prPage `json:"pullRequests"`
-			} `json:"repository"`
-		}
-		vars := map[string]any{"owner": owner, "name": name, "since": since, "after": after, "withMs": first}
-		if err := a.gql(qIssues, vars, &data); err != nil {
+		data, err := a.GH.PullIssues(a.repoFull(short), PullQuery{Since: since, After: after, First: first})
+		if err != nil {
 			return changed, err
 		}
-		if first && data.Repository.Labels != nil {
+		if first && data.Labels != nil {
 			var lb strings.Builder // name, colour hex, description: what the table needs to draw a label chip
-			for _, l := range data.Repository.Labels.Nodes {
+			for _, l := range data.Labels.Nodes {
 				desc := ""
 				if l.Description != nil {
 					desc = *l.Description
@@ -653,7 +574,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 		if first {
 			var recs []msRec
 			ids := a.msLocalIDs(short)
-			for _, m := range data.Repository.Milestones.Nodes {
+			for _, m := range data.Milestones.Nodes {
 				due := ""
 				if m.DueOn != nil {
 					due = dueDate(*m.DueOn)
@@ -666,10 +587,10 @@ func (a *App) pull(short string, full bool) (int, error) {
 			}
 		}
 		if first {
-			prFirst = data.Repository.PullRequests
+			prFirst = data.PullRequests
 		}
 		first = false
-		page := data.Repository.Issues
+		page := data.Issues
 		type rendered struct {
 			num       int
 			text, upd string
@@ -681,7 +602,7 @@ func (a *App) pull(short string, full bool) (int, error) {
 			}
 			rs = append(rs, rendered{n.Number, renderIssue(n), n.UpdatedAt})
 		}
-		err := a.withLock(".pull.lock", func() error {
+		err = a.withLock(".pull.lock", func() error {
 			for _, r := range rs {
 				ch, err := writeIfChanged(filepath.Join(d, fmt.Sprintf("%d.md", r.num)), r.text)
 				if err != nil {

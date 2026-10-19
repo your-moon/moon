@@ -484,20 +484,14 @@ func (a *App) cmdPRShow(o *Opts) error {
 		return nil
 	}
 	if _, ok := a.readPRs(short)[ident]; ok {
-		owner, name, _ := strings.Cut(a.repoFull(short), "/")
 		n, _ := strconv.Atoi(ident)
-		var d struct {
-			Repository struct {
-				PullRequest *prNode `json:"pullRequest"`
-			} `json:"repository"`
-		}
-		if err := a.gql(qPROne, map[string]any{"owner": owner, "name": name, "num": n}, &d); err != nil || d.Repository.PullRequest == nil {
+		pr, err := a.GH.PullRequest(a.repoFull(short), n)
+		if err != nil || pr == nil {
 			if err == nil {
 				err = &GhError{Msg: "no such PR"}
 			}
 			return die1("%s is not kept locally (older than %g days) and the live fetch failed: %s", ref, a.keepDays(), err)
 		}
-		pr := d.Repository.PullRequest
 		a.printf("%s\n\n"+liveNote+"\n", strings.TrimRight(renderPR(pr, prRowOf(pr)), "\n"), a.keepDays())
 		return nil
 	}

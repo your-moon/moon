@@ -1,7 +1,6 @@
 package issues
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,45 +56,7 @@ func (a *App) findByMarker(short, lid, opTS string) (int, error) {
 			return n, nil
 		}
 	}
-	out, err := a.gh([]string{"api", fmt.Sprintf("repos/%s/issues?state=all&since=%s&per_page=100", a.repoFull(short), sinceUTC(opTS, a.Now())), "--paginate",
-		"--jq", ".[] | {number: .number, body: .body}"}, "")
-	if err != nil {
-		return 0, err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if pyStrip(line) == "" {
-			continue
-		}
-		var it struct {
-			Number int    `json:"number"`
-			Body   string `json:"body"`
-		}
-		if err := json.Unmarshal([]byte(line), &it); err != nil {
-			return 0, err
-		}
-		if strings.Contains(it.Body, marker) {
-			return it.Number, nil
-		}
-	}
-	out, err = a.gh([]string{"issue", "list", "-R", a.repoFull(short), "--search", lid + " in:body", "--state", "all", "--json", "number,body", "--limit", "5"}, "")
-	if err != nil {
-		return 0, err
-	}
-	var items []struct {
-		Number int    `json:"number"`
-		Body   string `json:"body"`
-	}
-	if out = pyStrip(out); out != "" {
-		if err := json.Unmarshal([]byte(out), &items); err != nil {
-			return 0, err
-		}
-	}
-	for _, it := range items {
-		if strings.Contains(it.Body, marker) {
-			return it.Number, nil
-		}
-	}
-	return 0, nil
+	return a.GH.FindIssueByMarker(a.repoFull(short), lid, sinceUTC(opTS, a.Now()))
 }
 
 // execute runs one op. Returns the new issue number for a create, else 0.

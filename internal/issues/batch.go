@@ -1,13 +1,10 @@
 package issues
 
 import (
-	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Batched push (moon#18): independent queued writes on existing issues go out as aliased GraphQL mutations,
@@ -45,121 +42,57 @@ func newIDCache() *idCache {
 	return &idCache{issue: map[string]string{}, label: map[string]string{}, mstone: map[string]string{}}
 }
 
-type gqlErr struct {
-	Message string `json:"message"`
-	Path    []any  `json:"path"`
-}
-
-// gqlRaw runs a GraphQL request and returns data and errors separately: a partly failed request still has
-// data for the parts that worked. A failure with no JSON body comes back as err.
-func (a *App) gqlRaw(query string, vars map[string]any) (map[string]json.RawMessage, []gqlErr, error) {
-	body, _ := json.Marshal(map[string]any{"query": query, "variables": vars})
-	s, err := a.GH.Run([]string{"api", "graphql", "--input", "-"}, string(body), 120*time.Second)
-	var d struct {
-		Data   map[string]json.RawMessage `json:"data"`
-		Errors []gqlErr                   `json:"errors"`
-	}
-	if jerr := json.Unmarshal([]byte(s), &d); jerr != nil || (d.Data == nil && len(d.Errors) == 0) {
-		if err == nil {
-			err = &GhError{Msg: "graphql: unreadable response: " + trunc(s, 200)}
-		}
-		return nil, nil, err
-	}
-	return d.Data, d.Errors, nil
-}
-
-func errsText(es []gqlErr) string {
-	var m []string
-	for _, e := range es {
-		m = append(m, e.Message)
-	}
-	return trunc(strings.Join(m, "; "), 400)
-}
-
 // resolve fills c with the node ids the ops need: issues, labels to add or remove, a milestone by title.
 func (a *App) resolve(short string, ops []*Op, c *idCache) error {
-	owner, name, _ := strings.Cut(a.repoFull(short), "/")
-	vars := map[string]any{"owner": owner, "name": name}
-	var sel []string
-	decl := []string{"$owner:String!", "$name:String!"}
-	needMs := false
-	labelVar := map[string]string{} // alias -> label name
+	repo := a.repoFull(short)
+	var q IDQuery
 	seenIssue := map[string]bool{}
 	c.mu.Lock()
 	for _, o := range ops {
 		_, ident, _ := a.parseRef(o.Ref)
 		if _, ok := c.issue[short+"#"+ident]; !ok && !seenIssue[ident] {
 			seenIssue[ident] = true
-			sel = append(sel, fmt.Sprintf("i%s:issue(number:%s){id}", ident, ident))
+			q.Issues = append(q.Issues, ident)
 		}
 		for _, l := range append(argList(o.Args, "add"), argList(o.Args, "remove")...) {
 			k := short + "\x00" + l
 			if _, ok := c.label[k]; !ok {
-				v := fmt.Sprintf("l%d", len(labelVar))
-				labelVar[v] = l
-				vars[v] = l
-				decl = append(decl, "$"+v+":String!")
-				sel = append(sel, fmt.Sprintf("%s:label(name:$%s){id}", v, v))
+				q.Labels = append(q.Labels, l)
 				c.label[k] = ""
 			}
 		}
 		if o.Op == "milestone" && argStr(o.Args, "title") != "none" {
 			if _, ok := c.mstone[short+"\x00"+argStr(o.Args, "title")]; !ok {
-				needMs = true
+				q.Milestones = true
 			}
 		}
 	}
 	c.mu.Unlock()
-	if needMs {
-		sel = append(sel, "milestones(first:100,states:[OPEN,CLOSED]){pageInfo{hasNextPage} nodes{id title}}")
-	}
-	if len(sel) == 0 {
+	if len(q.Issues)+len(q.Labels) == 0 && !q.Milestones {
 		return nil
 	}
-	sort.Strings(sel)
-	q := "query(" + strings.Join(decl, ",") + "){repository(owner:$owner,name:$name){" + strings.Join(sel, " ") + "}}"
-	data, errs, err := a.gqlRaw(q, vars)
+	ids, err := a.GH.ResolveIDs(repo, q)
 	if err != nil {
 		return err
 	}
-	var repo map[string]json.RawMessage
-	json.Unmarshal(data["repository"], &repo)
-	if repo == nil {
-		return &GhError{Msg: "graphql: " + errsText(errs)}
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for k, raw := range repo {
-		var n struct {
-			ID    string `json:"id"`
-			Nodes []struct {
-				ID    string `json:"id"`
-				Title string `json:"title"`
-			} `json:"nodes"`
-			PageInfo pageInfo `json:"pageInfo"`
+	for n, id := range ids.Issues {
+		c.issue[short+"#"+n] = id
+	}
+	for l, id := range ids.Labels {
+		c.label[short+"\x00"+l] = id
+	}
+	if ids.MilestonesAll {
+		for t, id := range ids.Milestones {
+			c.mstone[short+"\x00"+t] = id
 		}
-		if json.Unmarshal(raw, &n) != nil {
-			continue
-		}
-		switch {
-		case k == "milestones":
-			if n.PageInfo.HasNextPage { // more than one page of milestones: unknown titles stay unknown
-				continue
-			}
-			for _, m := range n.Nodes {
-				c.mstone[short+"\x00"+m.Title] = m.ID
-			}
-			for _, o := range ops {
-				if t := argStr(o.Args, "title"); o.Op == "milestone" && t != "none" {
-					if _, ok := c.mstone[short+"\x00"+t]; !ok {
-						c.mstone[short+"\x00"+t] = ""
-					}
+		for _, o := range ops {
+			if t := argStr(o.Args, "title"); o.Op == "milestone" && t != "none" {
+				if _, ok := c.mstone[short+"\x00"+t]; !ok {
+					c.mstone[short+"\x00"+t] = ""
 				}
 			}
-		case labelVar[k] != "":
-			c.label[short+"\x00"+labelVar[k]] = n.ID
-		case strings.HasPrefix(k, "i") && n.ID != "":
-			c.issue[short+"#"+k[1:]] = n.ID
 		}
 	}
 	return nil
@@ -203,9 +136,8 @@ func (a *App) sendBatch(short string, ops []*Op, c *idCache) []sent {
 	if err := a.resolve(short, ops, c); err != nil {
 		return allFail(err)
 	}
-	var decl, body []string
-	vars := map[string]any{}
-	opAliases := make([][]string, len(ops))
+	var flat []mutation
+	var owner []int // flat[k] belongs to ops[owner[k]]
 	for i, o := range ops {
 		ms, err := a.mutationsFor(short, o, c)
 		if err != nil {
@@ -213,51 +145,28 @@ func (a *App) sendBatch(short string, ops []*Op, c *idCache) []sent {
 			continue
 		}
 		for _, m := range ms { // no mutations (a remove of labels the repo lacks) means nothing to send: done
-			al := "m" + strconv.Itoa(i) + m.alias
-			decl = append(decl, fmt.Sprintf("$%s:%s!", al, m.inType))
-			body = append(body, fmt.Sprintf("%s:%s(input:$%s){clientMutationId}", al, m.field, al))
-			vars[al] = m.input
-			opAliases[i] = append(opAliases[i], al)
+			m.alias = "m" + strconv.Itoa(i) + m.alias
+			flat = append(flat, m)
+			owner = append(owner, i)
 		}
 	}
-	if len(body) == 0 {
+	if len(flat) == 0 {
 		return res
 	}
-	data, errs, err := a.gqlRaw("mutation("+strings.Join(decl, ",")+"){"+strings.Join(body, " ")+"}", vars)
+	failed, err := a.GH.Mutate(flat)
 	if err != nil {
 		return allFail(err)
 	}
-	failed := map[string][]string{} // alias -> messages
-	var general []gqlErr            // errors that name no alias
-	for _, e := range errs {
-		if al, ok := firstString(e.Path); ok {
-			failed[al] = append(failed[al], e.Message)
-		} else {
-			general = append(general, e)
+	msgs := make([][]string, len(ops))
+	for k, f := range failed {
+		if f != "" {
+			msgs[owner[k]] = append(msgs[owner[k]], f)
 		}
 	}
 	for i := range ops {
-		if res[i].err != nil {
-			continue
-		}
-		var msgs []string
-		for _, al := range opAliases[i] {
-			msgs = append(msgs, failed[al]...)
-			if raw, ok := data[al]; (!ok || string(raw) == "null") && len(failed[al]) == 0 {
-				msgs = append(msgs, "no result for "+al+" "+errsText(general))
-			}
-		}
-		if len(msgs) > 0 {
-			res[i].err = &GhError{Msg: "graphql: " + trunc(strings.Join(msgs, "; "), 400)}
+		if res[i].err == nil && len(msgs[i]) > 0 {
+			res[i].err = &GhError{Msg: "graphql: " + trunc(strings.Join(msgs[i], "; "), 400)}
 		}
 	}
 	return res
-}
-
-func firstString(p []any) (string, bool) {
-	if len(p) == 0 {
-		return "", false
-	}
-	s, ok := p[0].(string)
-	return s, ok
 }

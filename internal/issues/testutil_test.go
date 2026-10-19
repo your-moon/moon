@@ -12,13 +12,20 @@ import (
 	"time"
 )
 
-// fakeGH is the GitHub interface for tests. Nothing here talks to a network.
+// fakeGH is the argv-level fake: a handler answers each gh command line. The typed GitHub methods come from cliGH over Run. Nothing here talks to a network.
 type fakeGH struct {
 	mu       sync.Mutex
 	hmu      sync.Mutex // serialises handler calls (they keep plain test state), unless parallel
 	parallel bool
 	calls    [][]string
 	handler  func(args []string, stdin string) (string, error)
+	cliGH    // the typed GitHub, spoken through Run: the shim that keeps argv-parsing handlers working
+}
+
+func newFakeGH() *fakeGH {
+	f := &fakeGH{}
+	f.cliGH = cliGH{run: f.Run}
+	return f
 }
 
 func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, error) {
@@ -34,16 +41,6 @@ func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, erro
 		defer f.hmu.Unlock()
 	}
 	return h(args, stdin)
-}
-
-func (f *fakeGH) ListMilestones(repo string) ([]RemoteMilestone, error) {
-	return ghListMilestones(f.Run, repo)
-}
-func (f *fakeGH) CreateMilestone(repo string, m RemoteMilestone) (RemoteMilestone, error) {
-	return ghCreateMilestone(f.Run, repo, m)
-}
-func (f *fakeGH) UpdateMilestone(repo string, n int, ch MilestoneChange) error {
-	return ghUpdateMilestone(f.Run, repo, n, ch)
 }
 
 func (f *fakeGH) callCount() int {
@@ -82,6 +79,7 @@ type env struct {
 	home  string
 	cfg   string
 	gh    *fakeGH
+	mem   *memGH // when set, the command talks to this in-memory GitHub instead of gh
 	now   time.Time
 	extra map[string]string
 	tick  bool
@@ -95,7 +93,7 @@ func newEnv(t *testing.T) *env {
 	d := t.TempDir()
 	cfg := filepath.Join(d, "moon.toml")
 	os.WriteFile(cfg, []byte("mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\ngithub = \"example/lib\"\n"), 0o644)
-	return &env{t: t, home: filepath.Join(d, "mirror"), cfg: cfg, gh: &fakeGH{}, now: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
+	return &env{t: t, home: filepath.Join(d, "mirror"), cfg: cfg, gh: newFakeGH(), now: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
 		extra: map[string]string{"ISSUES_NO_AUTOSYNC": "1"}}
 }
 
@@ -111,10 +109,24 @@ func (e *env) runIn(stdin string, args ...string) (string, string, int) {
 	var out, errb bytes.Buffer
 	code := Main(append([]string{"--config", e.cfg}, args...), Env{
 		Getenv: func(k string) string { return e.extra[k] },
-		Stdin:  strings.NewReader(stdin), Out: &out, Err: &errb, Cwd: e.workdir(), GH: e.gh, GitRemote: e.gitFunc(),
+		Stdin:  strings.NewReader(stdin), Out: &out, Err: &errb, Cwd: e.workdir(), GH: e.github(), GitRemote: e.gitFunc(),
 		Now: func() time.Time { return e.now }, TTY: e.tty, Width: e.width,
 	})
 	return out.String(), errb.String(), code
+}
+
+func (e *env) github() GitHub {
+	if e.mem != nil {
+		return e.mem
+	}
+	return e.gh
+}
+
+// useMem runs the env against an in-memory GitHub holding example/app.
+func (e *env) useMem() *memGH {
+	e.mem = newMemGH()
+	e.mem.repo("example/app")
+	return e.mem
 }
 
 func (e *env) workdir() string {
@@ -136,7 +148,7 @@ func (e *env) app() *App {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return &App{Home: e.home, GH: e.gh, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Stdin: strings.NewReader(""),
+	return &App{Home: e.home, GH: e.github(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Stdin: strings.NewReader(""),
 		Now: func() time.Time { return e.now }, Host: "testhost", Environ: func(k string) string { return e.extra[k] }, Repos: cfg.Repos}
 }
 
