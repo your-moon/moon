@@ -19,7 +19,10 @@ type ClaimsStore interface {
 // claimsTab is the read-only list of claims, the same data as `moon issues claims`.
 type claimsTab struct {
 	st      ClaimsStore
-	rows    []issues.ClaimRow
+	all     []issues.ClaimRow // every claim
+	rows    []issues.ClaimRow // shown: all, narrowed to alias
+	alias   string            // scope: only this repo's claims; "" shows every repo
+	scope   string            // footer text saying what the rows cover
 	cur     int
 	top     int
 	w, h    int
@@ -28,7 +31,28 @@ type claimsTab struct {
 
 // NewClaimsTab lists claims with age and TTL; stale ones are dimmed.
 func NewClaimsTab(st ClaimsStore) Tab {
-	return &claimsTab{st: st, rows: st.Claims()}
+	t := &claimsTab{st: st}
+	t.reload()
+	return t
+}
+
+func (t *claimsTab) reload() {
+	t.all = t.st.Claims()
+	t.rows = t.rows[:0:0]
+	for _, r := range t.all {
+		if short, _, _ := strings.Cut(r.Ref, "#"); t.alias == "" || short == t.alias {
+			t.rows = append(t.rows, r)
+		}
+	}
+}
+
+// SetScope narrows the rows to one repo ("" = all) and sets the footer text; the shell calls it when the Issues tab's scope changes.
+func (t *claimsTab) SetScope(alias, text string) Tab {
+	n := *t
+	n.alias, n.scope = alias, text
+	n.reload()
+	n.cur, n.top = min(n.cur, max(len(n.rows)-1, 0)), 0
+	return &n
 }
 
 func (t *claimsTab) Title() string { return "Claims" }
@@ -67,7 +91,7 @@ func (t *claimsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 		case "G", "end":
 			n.cur = len(n.rows) - 1
 		case "r":
-			n.rows = n.st.Claims()
+			n.reload()
 		case "q", "ctrl+c":
 			return &n, tea.Quit
 		}
@@ -145,7 +169,7 @@ func (t *claimsTab) View() string {
 		lines = append(lines, "")
 	}
 	lines = lines[:max(body, 1)]
-	lines = append(lines, stDim.Render(fit(t.Keys(), t.w)), fit(fmt.Sprintf("%d claims, %d stale, %d on closed issues", len(t.rows), stale, closed), t.w))
+	lines = append(lines, stDim.Render(fit(t.Keys(), t.w)), fit(strings.TrimSpace(fmt.Sprintf("%d claims, %d stale, %d on closed issues  %s", len(t.rows), stale, closed, t.scope)), t.w))
 	for i, l := range lines {
 		if lipgloss.Width(l) > t.w {
 			l = ansi.Truncate(l, t.w, "")

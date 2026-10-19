@@ -21,6 +21,11 @@ type Tab interface {
 	Capturing() bool
 }
 
+// scopedTab is a tab that follows the Issues tab's repo scope.
+type scopedTab interface {
+	SetScope(alias, text string) Tab
+}
+
 // Shell is the dashboard: a tab bar over the active tab.
 type Shell struct {
 	tabs   []Tab
@@ -34,7 +39,7 @@ func NewShell(tabs []Tab, active int) Shell {
 	if active < 0 || active >= len(tabs) {
 		active = 0
 	}
-	return Shell{tabs: tabs, active: active}
+	return Shell{tabs: tabs, active: active}.syncScope()
 }
 
 // ErrorShell shows a message (for example, no config found) instead of tabs.
@@ -74,6 +79,12 @@ func (s Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.active = n
 				return s, nil
 			}
+			// a and tab change the repo scope from any tab: the Issues tab owns the logic, the others follow
+			if k := msg.String(); (k == "a" || k == "tab") && s.issues() >= 0 && s.issues() != s.active {
+				if _, ok := s.tabs[s.active].(scopedTab); ok {
+					return s.forwardTo(s.issues(), msg)
+				}
+			}
 		}
 	case drillMsg:
 		for i, t := range s.tabs {
@@ -91,12 +102,52 @@ func (s Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return s.forward(msg)
 }
 
-func (s Shell) forward(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (s Shell) forward(msg tea.Msg) (tea.Model, tea.Cmd) { return s.forwardTo(s.active, msg) }
+
+func (s Shell) forwardTo(i int, msg tea.Msg) (tea.Model, tea.Cmd) {
+	before, _ := s.scope()
 	tabs := append([]Tab(nil), s.tabs...) // value semantics: do not mutate the caller's slice
 	var c tea.Cmd
-	tabs[s.active], c = tabs[s.active].Update(msg)
+	tabs[i], c = tabs[i].Update(msg)
 	s.tabs = tabs
+	if _, drill := msg.(drillMsg); i == s.issues() && !drill { // a drill-in narrows the Issues list only
+		if after, _ := s.scope(); after != before {
+			s = s.syncScope()
+		}
+	}
 	return s, c
+}
+
+// issues is the index of the Issues tab, or -1.
+func (s Shell) issues() int {
+	for i, t := range s.tabs {
+		if _, ok := t.(*issuesTab); ok {
+			return i
+		}
+	}
+	return -1
+}
+
+// scope is the Issues tab's repo filter and its footer text.
+func (s Shell) scope() (alias, text string) {
+	if i := s.issues(); i >= 0 {
+		m := s.tabs[i].(*issuesTab).m
+		return m.fAlias, m.scopeText()
+	}
+	return "", ""
+}
+
+// syncScope hands the Issues tab's repo scope to every tab that follows it.
+func (s Shell) syncScope() Shell {
+	alias, text := s.scope()
+	tabs := append([]Tab(nil), s.tabs...)
+	for i, t := range tabs {
+		if st, ok := t.(scopedTab); ok {
+			tabs[i] = st.SetScope(alias, text)
+		}
+	}
+	s.tabs = tabs
+	return s
 }
 
 // tabKey returns the tab index a key selects, or -1.
