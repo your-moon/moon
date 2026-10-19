@@ -11,7 +11,7 @@ var noAutopush = map[string]bool{"push": true, "pull": true, "sync": true, "prun
 // kickPush sends queued writes in the background right after a write, so no command waits on GitHub.
 // A background sync already running gets an .autosync.again note instead and pushes once more before it exits.
 func (a *App) kickPush() {
-	if a.Environ("ISSUES_NO_AUTOSYNC") != "" || !a.remoteOpsQueued() {
+	if off, _ := a.autosyncOff(); off || !a.remoteOpsQueued() {
 		return
 	}
 	if !a.takeAutosyncMarker() {
@@ -23,9 +23,13 @@ func (a *App) kickPush() {
 	}
 }
 
-// remoteOpsQueued: the outbox holds a write for a repo that has a GitHub side.
+// remoteOpsQueued: the outbox holds a write a sync could still send: for a repo that has a GitHub side, and
+// not one that sync gave up on (Permanent), which would only make every write spawn a sync that sends nothing.
 func (a *App) remoteOpsQueued() bool {
 	for _, op := range a.loadOutbox() {
+		if op.Permanent {
+			continue
+		}
 		if short, _, err := a.parseRef(op.Ref); err != nil || !a.localOnly(short) {
 			return true
 		}

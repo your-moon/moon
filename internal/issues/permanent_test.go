@@ -123,3 +123,55 @@ func TestAutosyncOffStopsTheBackgroundSpawn(t *testing.T) {
 		t.Fatal("control: with autosync on the read must spawn")
 	}
 }
+
+func TestAutosyncOffStopsTheBackgroundPushAfterAWrite(t *testing.T) {
+	for _, off := range []map[string]string{{"MOON_AUTOSYNC": "0"}, {"ISSUES_NO_AUTOSYNC": "1"}} {
+		e := newEnv(t)
+		delete(e.extra, "ISSUES_NO_AUTOSYNC")
+		for k, v := range off {
+			e.extra[k] = v
+		}
+		spawn := e.home + "-spawn"
+		e.extra["ISSUES_TEST_SPAWN"] = spawn
+		seedIndex(e)
+		e.run("comment", "app#9", "--body", "hi")
+		if _, err := os.Stat(spawn); err == nil {
+			t.Fatalf("%v: a write started a background push", off)
+		}
+		if len(e.app().loadOutbox()) != 1 {
+			t.Fatalf("%v: the write must stay queued", off)
+		}
+	}
+	e := newEnv(t) // moon.toml says autosync = false
+	delete(e.extra, "ISSUES_NO_AUTOSYNC")
+	e.write("../moon.toml", "autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
+	e.extra["ISSUES_TEST_SPAWN"] = e.home + "-spawn"
+	seedIndex(e)
+	e.run("comment", "app#9", "--body", "hi")
+	if _, err := os.Stat(e.extra["ISSUES_TEST_SPAWN"]); err == nil {
+		t.Fatal("config off: a write started a background push")
+	}
+}
+
+func TestPermanentOpDoesNotKickABackgroundPush(t *testing.T) {
+	e := newEnv(t)
+	e.run("close", "app#1")
+	e.gh.handler = func(args []string, stdin string) (string, error) {
+		return "", &GhError{Msg: "the 'example/app' repository has disabled issues"}
+	}
+	e.run("push")
+	if ops := e.app().loadOutbox(); len(ops) != 1 || !ops[0].Permanent {
+		t.Fatalf("setup: %+v", ops)
+	}
+	delete(e.extra, "ISSUES_NO_AUTOSYNC")
+	spawn := e.home + "-spawn"
+	e.extra["ISSUES_TEST_SPAWN"] = spawn
+	a := e.app()
+	if a.remoteOpsQueued() {
+		t.Fatal("a permanently failed op counts as sendable")
+	}
+	a.kickPush()
+	if _, err := os.Stat(spawn); err == nil {
+		t.Fatal("kickPush spawned a sync that can send nothing")
+	}
+}
