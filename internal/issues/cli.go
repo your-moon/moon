@@ -515,7 +515,7 @@ func Main(args []string, e Env) int {
 		a.Scope = ResolveScope(e.Cwd, cfg, git, ScopeOpts{Flags: o.L["repo"], All: o.B["all"], Home: e.Getenv("HOME")})
 	}
 	delete(o.S, "repo") // from here on the scope is the only source of the repo filter
-	if refCommands[name] {
+	if takesRef(name) {
 		ref, err := a.bareRef(o.Pos[0])
 		if err != nil {
 			fmt.Fprintln(e.Err, err)
