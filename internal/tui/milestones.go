@@ -86,6 +86,8 @@ type milestonesTab struct {
 	hideDone bool
 	multi    bool
 	ascii    bool
+	alias    string // scope: only this repo's rows; "" shows every repo
+	scope    string // footer text saying what the rows cover
 }
 
 // NewMilestonesTab builds the tab. The bar is plain ASCII under NO_COLOR, a dumb terminal or a pipe.
@@ -138,6 +140,9 @@ func (t *milestonesTab) load() {
 func (t *milestonesTab) resort() {
 	t.view = t.view[:0:0]
 	for _, r := range t.rows {
+		if t.alias != "" && r.alias != t.alias {
+			continue
+		}
 		if t.hideDone && !r.none && r.open == 0 && r.closed > 0 {
 			continue
 		}
@@ -170,6 +175,18 @@ func (t *milestonesTab) resort() {
 		return a.alias < b.alias
 	}
 	sort.SliceStable(t.view, func(i, j int) bool { return less(t.view[i], t.view[j]) })
+}
+
+// SetScope narrows the rows to one repo ("" = all) and sets the footer text; the shell calls it when the Issues tab's scope changes.
+func (t *milestonesTab) SetScope(alias, text string) Tab {
+	n := *t
+	n.alias, n.scope = alias, text
+	n.resort()
+	if n.cur >= len(n.view) {
+		n.cur = max(len(n.view)-1, 0)
+	}
+	n.top = min(n.top, n.cur)
+	return &n
 }
 
 func (t *milestonesTab) vis() int {
@@ -313,6 +330,9 @@ func (t *milestonesTab) View() string {
 		hide = "  fully closed hidden"
 	}
 	status := fmt.Sprintf("%d shown of %d  sort:%s%s", len(t.view), len(t.rows), msSortNames[t.sortBy], hide)
+	if t.scope != "" {
+		status += "  " + t.scope
+	}
 	if d := t.detail(); d != "" { // the selected milestone's due date and description
 		status = d + "  |  " + status
 	}
