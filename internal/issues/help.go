@@ -71,6 +71,8 @@ var helpTexts = map[string]helpEntry{
 	"outbox edit": {"change a queued write that sync cannot send (a bad label on a new issue, a wrong title or body)",
 		"moon issues outbox edit <op> [--title T] [--body B | --body-file F|-] [--label L ...] [--milestone M] [--add L ...] [--remove L ...] [--allow-empty-body]",
 		[2]string{"moon issues outbox edit 3f9a21c0 --label bug --label area::web   # new: replaces its labels", "moon issues outbox edit 3f9a21c0 --body-file fixed.md   # <op> is a piece of the op id from outbox ls"}},
+	"outbox retry": {"send a write again that sync gave up on (GitHub said a retry cannot work)", "moon issues outbox retry <op>",
+		[2]string{"moon issues outbox retry 3f9a1c2b", "moon issues outbox ls   # shows which writes sync gave up on, and why"}},
 	"outbox drop": {"remove a queued write; a queued new issue with writes queued on it needs --cascade", "moon issues outbox drop <op> [--cascade]",
 		[2]string{"moon issues outbox drop 3f9a21c0", "moon issues outbox drop 3f9a21c0 --cascade   # also drop the writes queued on that new issue"}},
 	"push": {"send queued writes to GitHub", "moon issues push [--repo R]",

@@ -248,6 +248,10 @@ func nextBatch(all []*Op, badRefs, tried, busy map[string]bool, repoFilter, only
 		if badRefs[o.Ref] || tried[o.OpID] {
 			continue
 		}
+		if o.Permanent { // never sent again; the writes behind it on the same issue wait too
+			seen[orderKey(o)] = true
+			continue
+		}
 		if repoFilter != "" && shortOf(o.Ref) != repoFilter {
 			continue
 		}
@@ -324,6 +328,10 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 		if err != nil {
 			op.Attempts++
 			msg := trunc(err.Error(), 500)
+			if permanentError(msg) {
+				op.Permanent = true
+				msg = permanentPrefix + msg
+			}
 			op.LastError = &msg
 			ge, isGh := err.(*GhError)
 			op.Inflight = !(isGh && !ge.Timeout)
@@ -631,11 +639,9 @@ func (a *App) cmdSync(o *Opts) error {
 	if len(remote) == 0 {
 		return nil
 	}
-	var pushOnly []string // nil = everything queued; a scoped sync only sends its own repos' writes
-	if a.scoped() {
-		pushOnly = remote
-	}
-	rc := a.doSync(remote, o.B["quiet"], a.Out, pushOnly)
+	// only the writes of the repos being synced: a scoped sync leaves the others alone, and a local-only repo's
+	// writes are never sent (pushRepos sends everything queued when remote is every repo)
+	rc := a.doSync(remote, o.B["quiet"], a.Out, remote)
 	if o.B["quiet"] { // the marker belongs to the background sync that this process is
 		os.Remove(filepath.Join(a.Home, ".autosync"))
 	}

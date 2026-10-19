@@ -104,13 +104,14 @@ func commands() map[string]*spec {
 		"milestone": {npos: 2, run: func(a *App, o *Opts) error { return a.cmdSimple("milestone")(o) }},
 		"edit": {fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "depends-on", kind: 'a'}, emptyBodyFl()), bodyFls()), npos: 1,
 			run: func(a *App, o *Opts) error { return a.cmdSimple("edit")(o) }},
-		"push":        {fls: one(repoFl()), run: (*App).cmdPush},
-		"pull":        {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
-		"prune":       {fls: one(repoFl()), run: (*App).cmdPrune},
-		"sync":        {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
-		"where":       {run: (*App).cmdWhere},
-		"outbox ls":   {fls: fmtFls(), run: (*App).cmdOutboxLs},
-		"outbox drop": {fls: one(fl{name: "cascade", kind: 'b'}), npos: 1, run: (*App).cmdOutboxDrop},
+		"push":         {fls: one(repoFl()), run: (*App).cmdPush},
+		"pull":         {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
+		"prune":        {fls: one(repoFl()), run: (*App).cmdPrune},
+		"sync":         {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
+		"where":        {run: (*App).cmdWhere},
+		"outbox ls":    {fls: fmtFls(), run: (*App).cmdOutboxLs},
+		"outbox retry": {npos: 1, run: (*App).cmdOutboxRetry},
+		"outbox drop":  {fls: one(fl{name: "cascade", kind: 'b'}), npos: 1, run: (*App).cmdOutboxDrop},
 		"outbox edit": {fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "label", kind: 'a'}, fl{name: "milestone", kind: 's'},
 			fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}, emptyBodyFl()), bodyFls()), npos: 1, run: (*App).cmdOutboxEdit},
 	}
@@ -664,7 +665,7 @@ func spawnSync(a *App) error {
 }
 
 // isOutboxSub: the words that follow `moon issues outbox`.
-func isOutboxSub(w string) bool { return w == "ls" || w == "edit" || w == "drop" }
+func isOutboxSub(w string) bool { return w == "ls" || w == "edit" || w == "drop" || w == "retry" }
 
 // isMsSub: the words that follow `moon issues milestones`.
 func isMsSub(w string) bool {

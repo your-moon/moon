@@ -160,3 +160,40 @@ func (a *App) cmdOutboxDrop(o *Opts) error {
 		return nil
 	})
 }
+
+// permanentPrefix starts the last error of an op that sync gave up on.
+const permanentPrefix = "permanent, no retry: "
+
+// permanentMarkers are the GitHub errors a retry can never fix.
+var permanentMarkers = []string{
+	"has disabled issues",
+	"issues are disabled",
+	"Could not resolve to a Repository",
+	"repository has been archived",
+	"repository is archived",
+}
+
+func permanentError(msg string) bool {
+	l := strings.ToLower(msg)
+	for _, m := range permanentMarkers {
+		if strings.Contains(l, strings.ToLower(m)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) cmdOutboxRetry(o *Opts) error {
+	op, err := a.findOp(o.Pos[0])
+	if err != nil {
+		return err
+	}
+	return a.withQueueLock(func() error {
+		op.Permanent, op.LastError, op.Attempts = false, nil, 0
+		if err := a.saveOp(op); err != nil {
+			return err
+		}
+		a.printf("retry %s  %s %s\n", op.OpID, op.Op, op.Ref)
+		return nil
+	})
+}
