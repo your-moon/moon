@@ -79,6 +79,7 @@ type env struct {
 	home  string
 	cfg   string
 	gh    *fakeGH
+	mem   *memGH // when set, the command talks to this in-memory GitHub instead of gh
 	now   time.Time
 	extra map[string]string
 	tick  bool
@@ -108,10 +109,24 @@ func (e *env) runIn(stdin string, args ...string) (string, string, int) {
 	var out, errb bytes.Buffer
 	code := Main(append([]string{"--config", e.cfg}, args...), Env{
 		Getenv: func(k string) string { return e.extra[k] },
-		Stdin:  strings.NewReader(stdin), Out: &out, Err: &errb, Cwd: e.workdir(), GH: e.gh, GitRemote: e.gitFunc(),
+		Stdin:  strings.NewReader(stdin), Out: &out, Err: &errb, Cwd: e.workdir(), GH: e.github(), GitRemote: e.gitFunc(),
 		Now: func() time.Time { return e.now }, TTY: e.tty, Width: e.width,
 	})
 	return out.String(), errb.String(), code
+}
+
+func (e *env) github() GitHub {
+	if e.mem != nil {
+		return e.mem
+	}
+	return e.gh
+}
+
+// useMem runs the env against an in-memory GitHub holding example/app.
+func (e *env) useMem() *memGH {
+	e.mem = newMemGH()
+	e.mem.repo("example/app")
+	return e.mem
 }
 
 func (e *env) workdir() string {
@@ -133,7 +148,7 @@ func (e *env) app() *App {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return &App{Home: e.home, GH: e.gh, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Stdin: strings.NewReader(""),
+	return &App{Home: e.home, GH: e.github(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Stdin: strings.NewReader(""),
 		Now: func() time.Time { return e.now }, Host: "testhost", Environ: func(k string) string { return e.extra[k] }, Repos: cfg.Repos}
 }
 
