@@ -173,22 +173,15 @@ func (m *Model) matches(e *entry) bool {
 	if m.fWorking && it.Work.Name != issues.StWorking {
 		return false
 	}
-	if m.fMilestone == noMilestone {
-		if it.Milestone != "" {
-			return false
+	if m.fMilestone != "" || m.fLabel != "" { // the same matcher as the search box's label: and milestone:
+		q := completion.Query{Milestone: m.fMilestone}
+		if m.fMilestone == noMilestone {
+			q.Milestone = "none"
 		}
-	} else if m.fMilestone != "" && it.Milestone != m.fMilestone {
-		return false
-	}
-	if m.fLabel != "" {
-		ok := false
-		for _, l := range it.Labels {
-			if l == m.fLabel {
-				ok = true
-				break
-			}
+		if m.fLabel != "" {
+			q.Labels = []string{m.fLabel}
 		}
-		if !ok {
+		if !q.Match(it) {
 			return false
 		}
 	}

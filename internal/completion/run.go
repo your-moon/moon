@@ -58,62 +58,18 @@ func oneLineTab(s string) string {
 	return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s)
 }
 
-// splitLine splits a command line like a shell does (quotes and backslashes). It returns the unquoted words,
-// the raw text of the last word, and the quote character left open in it (0 if none). A line that ends in
-// a space gets an empty last word.
+// splitLine splits a command line like a shell does (SplitWords). It returns the unquoted words, the raw
+// text of the last word, and the quote character left open in it (0 if none). A line that ends in a space
+// gets an empty last word.
 func splitLine(line string) (words []string, raw string, quote byte) {
-	var cur strings.Builder
-	start := 0
-	inWord := false
-	flush := func(end int) {
-		words = append(words, cur.String())
-		cur.Reset()
-		inWord = false
-		_ = end
+	ws, quote := SplitWords(line)
+	for _, w := range ws {
+		words = append(words, w.Text)
 	}
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		switch {
-		case quote == '\'':
-			if c == '\'' {
-				quote = 0
-			} else {
-				cur.WriteByte(c)
-			}
-		case quote == '"':
-			switch {
-			case c == '"':
-				quote = 0
-			case c == '\\' && i+1 < len(line) && strings.IndexByte("\"\\$`", line[i+1]) >= 0:
-				i++
-				cur.WriteByte(line[i])
-			default:
-				cur.WriteByte(c)
-			}
-		case c == ' ' || c == '\t':
-			if inWord {
-				flush(i)
-			}
-		default:
-			if !inWord {
-				inWord, start = true, i
-			}
-			switch {
-			case c == '\'' || c == '"':
-				quote = c
-			case c == '\\' && i+1 < len(line):
-				i++
-				cur.WriteByte(line[i])
-			default:
-				cur.WriteByte(c)
-			}
-		}
+	if last := ws[len(ws)-1]; last.Text != "" || quote != 0 {
+		return words, line[last.Start:], quote
 	}
-	if inWord {
-		words = append(words, cur.String())
-		return words, line[start:], quote
-	}
-	return append(words, ""), "", 0
+	return words, "", 0
 }
 
 // bashEscape rewrites candidates the way bash needs them: escaped for the quote state of the word being
