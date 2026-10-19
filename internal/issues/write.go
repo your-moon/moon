@@ -2,6 +2,7 @@ package issues
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -430,20 +431,84 @@ func toAny(l []string) []any {
 	return out
 }
 
-// labelArgs is the op args of `label`: the labels to add (checked against the repo's labels) and to remove.
-func (a *App) labelArgs(o *Opts) (map[string]any, error) {
-	add, rm := o.L["add"], o.L["remove"]
+// labels queues label changes on ref: add (checked against the repo's labels) and remove.
+func (a *App) labels(ref string, add, rm []string) (opResult, error) {
 	if len(add)+len(rm) == 0 {
-		return nil, die("label needs --add and/or --remove")
+		return opResult{}, die("label needs --add and/or --remove")
 	}
-	short, _, err := a.parseRef(o.Pos[0])
+	short, _, err := a.parseRef(ref)
 	if err != nil {
-		return nil, err
+		return opResult{}, err
 	}
 	if add, err = a.checkLabels(short, add); err != nil {
-		return nil, err
+		return opResult{}, err
 	}
-	return map[string]any{"add": toAny(add), "remove": toAny(rm)}, nil
+	return a.queueOp("label", ref, map[string]any{"add": toAny(add), "remove": toAny(rm)})
+}
+
+// opResult is what a queued write reports: the op id, the ref it landed on, and (close only) what happened to the agent's claim.
+type opResult struct {
+	OpID, Ref, Claim string
+}
+
+func (r opResult) line() string {
+	extra := ""
+	if r.Claim != "" {
+		extra = "  claim: " + r.Claim
+	}
+	return fmt.Sprintf("op %s  ref %s%s\n", r.OpID, r.Ref, extra)
+}
+
+// queueOp applies one write op to ref: straight to the file for a local-only repo, else onto the outbox.
+func (a *App) queueOp(kind, ref string, args map[string]any) (opResult, error) {
+	if short, _, perr := a.parseRef(ref); perr == nil && a.localOnly(short) {
+		if err := a.applyLocalOnly(kind, ref, args); err != nil {
+			return opResult{}, err
+		}
+		return opResult{OpID: "local", Ref: ref}, nil
+	}
+	opID, r, err := a.enqueue(kind, ref, args)
+	if err != nil {
+		return opResult{}, err
+	}
+	return opResult{OpID: opID, Ref: r}, nil
+}
+
+// closeIssue queues a close with reason and optional comment, then drops agent's claim on the issue
+// (any claim when the caller named no agent: noAgent), as `moon issues close` does.
+func (a *App) closeIssue(ref, reason, comment, agent string, noAgent bool) (opResult, error) {
+	args := map[string]any{"reason": reason}
+	if comment != "" {
+		args["comment"] = comment
+	}
+	r, err := a.queueOp("close", ref, args)
+	if err != nil {
+		return r, err
+	}
+	r.Claim = a.releaseClaim(r.Ref, agent, noAgent)
+	return r, nil
+}
+
+// reopen queues reopening ref.
+func (a *App) reopen(ref string) (opResult, error) {
+	return a.queueOp("reopen", ref, map[string]any{})
+}
+
+// comment queues a comment on ref; a blank body is refused.
+func (a *App) comment(ref, body string) (opResult, error) {
+	if pyStrip(body) == "" {
+		return opResult{}, die("comment needs --body or --body-file")
+	}
+	return a.queueOp("comment", ref, map[string]any{"body": body})
+}
+
+// setMilestone queues a milestone change on ref; title "none" clears it.
+func (a *App) setMilestone(ref, title string) (opResult, error) {
+	t, err := a.msIssueTitle(ref, title)
+	if err != nil {
+		return opResult{}, err
+	}
+	return a.queueOp("milestone", ref, map[string]any{"title": t})
 }
 
 func (a *App) cmdSimple(kind string) func(o *Opts) error {
@@ -455,27 +520,40 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			if err != nil {
 				return err
 			}
-			if pyStrip(b) == "" {
-				return die("comment needs --body or --body-file")
+			r, err := a.comment(o.Pos[0], b)
+			if err != nil {
+				return err
 			}
-			args["body"] = b
+			a.printf("%s", r.line())
+			return nil
 		case "close":
-			args["reason"] = o.str("reason")
-			if c := o.str("comment"); c != "" {
-				args["comment"] = c
+			r, err := a.closeIssue(o.Pos[0], o.str("reason"), o.str("comment"), o.str("agent"), !o.Seen["agent"])
+			if err != nil {
+				return err
 			}
+			a.printf("%s", r.line())
+			return nil
+		case "reopen":
+			r, err := a.reopen(o.Pos[0])
+			if err != nil {
+				return err
+			}
+			a.printf("%s", r.line())
+			return nil
 		case "label":
-			la, err := a.labelArgs(o)
+			r, err := a.labels(o.Pos[0], o.L["add"], o.L["remove"])
 			if err != nil {
 				return err
 			}
-			args = la
+			a.printf("%s", r.line())
+			return nil
 		case "milestone":
-			t, err := a.msIssueTitle(o.Pos[0], o.Pos[1])
+			r, err := a.setMilestone(o.Pos[0], o.Pos[1])
 			if err != nil {
 				return err
 			}
-			args["title"] = t
+			a.printf("%s", r.line())
+			return nil
 		case "edit":
 			if o.Seen["title"] {
 				args["title"] = o.str("title")
@@ -496,26 +574,11 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 				return die("edit needs --title, --body and/or --depends-on")
 			}
 		}
-		var opID, ref string
-		if short, _, perr := a.parseRef(o.Pos[0]); perr == nil && a.localOnly(short) {
-			if err := a.applyLocalOnly(kind, o.Pos[0], args); err != nil {
-				return err
-			}
-			opID, ref = "local", o.Pos[0]
-		} else {
-			var err error
-			opID, ref, err = a.enqueue(kind, o.Pos[0], args)
-			if err != nil {
-				return err
-			}
+		r, err := a.queueOp(kind, o.Pos[0], args)
+		if err != nil {
+			return err
 		}
-		extra := ""
-		if kind == "close" {
-			ag := o.str("agent")
-			r := a.releaseClaim(ref, ag, !o.Seen["agent"])
-			extra = "  claim: " + r
-		}
-		a.printf("op %s  ref %s%s\n", opID, ref, extra)
+		a.printf("%s", r.line())
 		return nil
 	}
 }
@@ -657,12 +720,9 @@ func parseTTL(t string) (int, error) {
 }
 
 func (a *App) cmdClaim(o *Opts) error {
-	ref, agent := o.Pos[0], o.str("agent")
-	if _, _, err := a.parseRef(ref); err != nil {
+	if _, _, err := a.parseRef(o.Pos[0]); err != nil { // a bad ref is reported before a bad --ttl
 		return err
 	}
-	os.MkdirAll(a.claimsDir(), 0o755)
-	path, _ := a.claimPath(ref)
 	ttlStr := o.str("ttl")
 	if ttlStr == "" {
 		ttlStr = "120m"
@@ -675,18 +735,32 @@ func (a *App) cmdClaim(o *Opts) error {
 		return err
 	}
 	pid, _ := strconv.Atoi(o.str("pid"))
-	mine := &Claim{agent, pid, a.Host, a.nowEpoch(), float64(ttl)}
-	body := mine.marshal()
-	taken := func(format string, args ...any) error {
-		a.printf(format+"\n", args...)
+	msg, err := a.claim(o.Pos[0], o.str("agent"), ttl, pid)
+	if msg != "" {
+		a.printf("%s\n", msg)
+	}
+	if errors.Is(err, ErrHeld) {
 		return &exitError{Code: 3}
 	}
+	return err
+}
+
+// claim takes (or renews, or takes over a stale) claim on ref for agent and returns the one line
+// `moon issues claim` prints. A claim held by someone else comes back as ErrHeld together with the
+// line saying who holds it; it is never forced. ttl is in seconds.
+func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
+	if _, _, err := a.parseRef(ref); err != nil {
+		return "", err
+	}
+	os.MkdirAll(a.claimsDir(), 0o755)
+	path, _ := a.claimPath(ref)
+	mine := &Claim{agent, pid, a.Host, a.nowEpoch(), float64(ttl)}
+	body := mine.marshal()
 	for {
 		if err := createExcl(path, body+"\n"); err == nil { // M_excl
-			a.printf("claimed %s for %s\n", ref, agent)
-			return nil
+			return fmt.Sprintf("claimed %s for %s", ref, agent), nil
 		} else if !os.IsExist(err) {
-			return err
+			return "", err
 		}
 		cur := a.readClaim(path)
 		if cur == nil {
@@ -694,28 +768,26 @@ func (a *App) cmdClaim(o *Opts) error {
 		}
 		if cur.Agent == agent && !a.claimIsStale(cur) {
 			atomicWrite(path, body+"\n", false)
-			a.printf("renewed claim on %s for %s\n", ref, agent)
-			return nil
+			return fmt.Sprintf("renewed claim on %s for %s", ref, agent), nil
 		}
 		if !a.claimIsStale(cur) {
-			return taken("%s", a.heldMsg(ref, cur))
+			return a.heldMsg(ref, cur), ErrHeld
 		}
 		// stale: exactly one taker wins the rename, then races everyone else on O_EXCL
 		gone := path + ".stale." + strings.ReplaceAll(uuid4(), "-", "")
 		if err := os.Rename(path, gone); err != nil {
-			return taken("TAKEN %s was just taken over by someone else", ref)
+			return fmt.Sprintf("TAKEN %s was just taken over by someone else", ref), ErrHeld
 		}
 		moved := a.readClaim(gone)
 		os.Remove(gone)
 		if moved != nil && !a.claimIsStale(moved) { // we renamed a fresh claim that replaced the stale one
 			createExcl(path, moved.marshal()+"\n")
-			return taken("%s", a.heldMsg(ref, moved))
+			return a.heldMsg(ref, moved), ErrHeld
 		}
 		if err := createExcl(path, body+"\n"); err != nil {
-			return taken("TAKEN %s was just taken by someone else", ref)
+			return fmt.Sprintf("TAKEN %s was just taken by someone else", ref), ErrHeld
 		}
-		a.printf("took over stale claim on %s (was %s); now held by %s\n", ref, a.holderText(cur), agent)
-		return nil
+		return fmt.Sprintf("took over stale claim on %s (was %s); now held by %s", ref, a.holderText(cur), agent), nil
 	}
 }
 
@@ -724,13 +796,26 @@ func (a *App) cmdRelease(o *Opts) error {
 	if !force && agent == "" {
 		return die("release needs --agent NAME (you must be the holder) or --force")
 	}
-	if _, _, err := a.parseRef(o.Pos[0]); err != nil {
-		return err
+	msg, err := a.release(o.Pos[0], agent, force)
+	if msg != "" {
+		a.printf("%s\n", msg)
 	}
-	r := a.releaseClaim(o.Pos[0], agent, force)
-	a.printf("%s: %s\n", o.Pos[0], r)
+	if errors.Is(err, ErrHeld) {
+		return &exitError{Code: 3}
+	}
+	return err
+}
+
+// release drops agent's claim on ref (any claim with force) and returns the line `moon issues
+// release` prints. Someone else's claim comes back as ErrHeld together with that line.
+func (a *App) release(ref, agent string, force bool) (string, error) {
+	if _, _, err := a.parseRef(ref); err != nil {
+		return "", err
+	}
+	r := a.releaseClaim(ref, agent, force)
+	msg := ref + ": " + r
 	if r == "released" || r == "none" {
-		return nil
+		return msg, nil
 	}
-	return &exitError{Code: 3}
+	return msg, ErrHeld
 }
