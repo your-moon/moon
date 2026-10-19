@@ -12,79 +12,6 @@ type helpEntry struct {
 	examples [2]string
 }
 
-var helpTexts = map[string]helpEntry{
-	"where": {"show which repos commands default to here, why, and which rule matched", "moon issues where [-R alias ...] [--all]",
-		[2]string{"moon issues where", "moon issues where -R all   # what --all would look at"}},
-	"ls": {"list issues from the local mirror, with their work status", "moon issues ls [--repo R] [--state open|closed|all] [--label L] [--milestone M] [-q text] [-w] [-i] [--status S[,S]] [-B full|short|none]",
-		[2]string{"moon issues ls -L bug -s up -l 10", "moon issues ls -w   # what agents are working on; -i = idle, -s status = by status"}},
-	"show": {"print one issue with its comments", "moon issues show <ref>",
-		[2]string{"moon issues show app#12", "moon issues show app#L-20260301120000-ab12   # an issue not pushed yet"}},
-	"milestones": {"list milestones with progress (open ones on a terminal, all when piped)", "moon issues milestones [--repo R] [--state open|closed|all] [--sort due|progress|title|open] [-r] [--limit N]",
-		[2]string{"moon issues milestones -s due", "moon issues milestones -S all -j"}},
-	"milestones show": {"one milestone's progress and its issues", "moon issues milestones show <title> [--repo R] [--state open|closed|all] [--label L] [--sort ...] [--limit N]",
-		[2]string{"moon issues milestones show v1.0", "moon issues milestones show v1 -S all -s t   # a unique prefix is enough"}},
-	"milestones new": {"create a milestone (queued locally as M-<n>; sync creates it on GitHub before the issues that use it)",
-		"moon issues milestones new <title> [-d YYYY-MM-DD] [-D text | --description-file F|-] [-R repo]",
-		[2]string{"moon issues milestones new \"v1.0\" -d 2026-12-31 -D \"first public release\"", "moon issues milestones new \"auth rewrite\" --description-file plan.md -R app   # then: moon issues new -R app -m M-1 ..."}},
-	"milestones edit": {"change a milestone's title, due date or description (queued, sent by sync)",
-		"moon issues milestones edit <title|M-n> [--title T] [-d YYYY-MM-DD|none] [-D text | --description-file F|-] [-R repo]",
-		[2]string{"moon issues milestones edit v1.0 -d 2027-01-31", "moon issues milestones edit M-2 --title \"auth rewrite v2\" -d none -D \"scope cut\""}},
-	"labels new": {"create a label (queued locally; sync creates it on GitHub before the issues that use it)",
-		"moon issues labels new <name> [--color RRGGBB] [-D text] [-R repo]",
-		[2]string{"moon issues labels new area::sim --color 1d76db", "moon issues labels new area::sim -R falcon && moon issues new -R falcon -L area::sim ..."}},
-	"milestones close": {"close a milestone (queued, sent by sync)", "moon issues milestones close <title|M-n> [-R repo]",
-		[2]string{"moon issues milestones close v1.0", "moon issues milestones close M-2 -R app"}},
-	"milestones reopen": {"reopen a closed milestone (queued, sent by sync)", "moon issues milestones reopen <title|M-n> [-R repo]",
-		[2]string{"moon issues milestones reopen v1.0", "moon issues milestones reopen M-2 -R app"}},
-	"prs": {"list pull requests from the mirror", "moon issues prs [--repo R] [--state open|merged|closed|all] [--since ISO] [--json]",
-		[2]string{"moon issues prs -S merged --since 2026-01-01T00:00:00Z", "moon issues prs -S all -s up -l 5"}},
-	"pr show": {"print one pull request", "moon issues pr show <ref>",
-		[2]string{"moon issues pr show app#31", "moon issues pr show lib#4"}},
-	"frontier": {"open issues nobody has claimed", "moon issues frontier [--repo R] [--label L] [--milestone M] [-i] [--status S[,S]] [-B full|short|none]",
-		[2]string{"moon issues frontier -L kind:bug", "moon issues frontier -s t -l 5   # or just: moon issues frontier 5"}},
-	"claim": {"claim an issue for an agent (exit 3 when someone else holds it)", "moon issues claim <ref> --agent NAME [--ttl 120m] [--pid N]   (--ttl default: claim_ttl in moon.toml, else 120m; claim again with the same --agent to renew the lease)",
-		[2]string{"moon issues claim app#12 -a alice", "moon issues claim app#12 -a alice --ttl 30m"}},
-	"release": {"drop a claim", "moon issues release <ref> (--agent NAME | --force)",
-		[2]string{"moon issues release app#12 -a alice", "moon issues release app#12 --force"}},
-	"claims": {"list claims with the work status of their issue (a claim on a closed issue is flagged)", "moon issues claims [--show-status]",
-		[2]string{"moon issues claims", "moon issues claims -j"}},
-	"sweep": {"list claims that are stale or on closed issues; --release removes them (dry run by default)", "moon issues sweep [--release] [--live] [--agent NAME]",
-		[2]string{"moon issues sweep --release", "moon issues sweep --live --agent alice --release   # stop work: drop all of alice's claims"}},
-	"status": {"outbox, autosync (on or off, last run) and last-pull summary", "moon issues status",
-		[2]string{"moon issues status", "moon issues status -t"}},
-	"new": {"queue a new issue (sent by sync)", "moon issues new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--depends-on REF ...] [--now] [--allow-empty-body]",
-		[2]string{"moon issues new --repo app --title \"login: button is dead\" --body \"steps...\" --label bug", "echo details | moon issues new --repo app --title \"docs: typo\" --body-file - --now"}},
-	"comment": {"queue a comment", "moon issues comment <ref> (--body B | --body-file F|-)",
-		[2]string{"moon issues comment app#12 --body \"on it\"", "moon issues comment app#12 --body-file notes.md"}},
-	"close": {"queue closing an issue", "moon issues close <ref> [--reason completed|not_planned] [--comment C] [--agent NAME]",
-		[2]string{"moon issues close app#12", "moon issues close app#12 -a alice --reason not_planned --comment \"duplicate of #9\""}},
-	"reopen": {"queue reopening an issue", "moon issues reopen <ref>",
-		[2]string{"moon issues reopen app#12", "moon issues reopen lib#3"}},
-	"label": {"queue label changes", "moon issues label <ref> [--add L ...] [--remove L ...]",
-		[2]string{"moon issues label app#12 --add bug --add urgent", "moon issues label app#12 --remove urgent"}},
-	"milestone": {"queue setting a milestone (use none to clear)", "moon issues milestone <ref> <title|none>",
-		[2]string{"moon issues milestone app#12 v1.0", "moon issues milestone app#12 none"}},
-	"edit": {"queue a title or body edit", "moon issues edit <ref> [--title T] [--body B | --body-file F|-] [--depends-on REF ...|none] [--allow-empty-body]",
-		[2]string{"moon issues edit app#12 --title \"login: button is dead on Safari\"", "moon issues edit app#12 --depends-on 9 --depends-on 10   # body gets: Depends on #9, #10"}},
-	"outbox ls": {"list the queued writes with their last error (what sync will send)", "moon issues outbox [ls] [--repo R] [--format auto|table|tsv|json]",
-		[2]string{"moon issues outbox", "moon issues outbox ls -j   # args included"}},
-	"outbox edit": {"change a queued write that sync cannot send (a bad label on a new issue, a wrong title or body)",
-		"moon issues outbox edit <op> [--title T] [--body B | --body-file F|-] [--label L ...] [--milestone M] [--add L ...] [--remove L ...] [--allow-empty-body]",
-		[2]string{"moon issues outbox edit 3f9a21c0 --label bug --label area::web   # new: replaces its labels", "moon issues outbox edit 3f9a21c0 --body-file fixed.md   # <op> is a piece of the op id from outbox ls"}},
-	"outbox retry": {"send a write again that sync gave up on (GitHub said a retry cannot work)", "moon issues outbox retry <op>",
-		[2]string{"moon issues outbox retry 3f9a1c2b", "moon issues outbox ls   # shows which writes sync gave up on, and why"}},
-	"outbox drop": {"remove a queued write; a queued new issue with writes queued on it needs --cascade", "moon issues outbox drop <op> [--cascade]",
-		[2]string{"moon issues outbox drop 3f9a21c0", "moon issues outbox drop 3f9a21c0 --cascade   # also drop the writes queued on that new issue"}},
-	"push": {"send queued writes to GitHub", "moon issues push [--repo R]",
-		[2]string{"moon issues push", "moon issues push -R app"}},
-	"pull": {"refresh the mirror from GitHub", "moon issues pull [--repo R] [--full]",
-		[2]string{"moon issues pull", "moon issues pull -R app --full"}},
-	"sync": {"push, then pull", "moon issues sync [--repo R] [--quiet]",
-		[2]string{"moon issues sync", "moon issues sync -R app --quiet"}},
-	"prune": {"delete mirror files of old closed items", "moon issues prune [--repo R]",
-		[2]string{"moon issues prune", "ISSUES_KEEP_DAYS=7 moon issues prune --repo app"}},
-}
-
 var flagHelp = map[string]string{
 	"repo": "only this repo alias (repeatable); -R all = every repo. Default: the project you are in, else all repos",
 	"all":  "every configured repo, not only the project you are in (same as -R all)", "fresh": "sync first, then read", "state": "which items", "label": "only this label",
@@ -119,8 +46,8 @@ func commandNames() []string {
 }
 
 func cmdHelp(name string) string {
-	h := helpTexts[name]
 	sp := commands()[name]
+	h := sp.help
 	var b strings.Builder
 	fmt.Fprintf(&b, "moon issues %s: %s\n\nusage: %s\n", name, h.summary, h.usage)
 	if sp != nil && len(sp.fls) > 0 {

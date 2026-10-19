@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// This file is the read-only view of the command table (commands, helpTexts, flagHelp, shortMap) that
+// This file is the read-only view of the command table (commands, flagHelp, shortMap) that
 // shell completion and the TUI command line use. There is no second copy of any flag: help, the parser
 // and completion all read the same table, and spec_test.go fails when a usage line and the table disagree.
 
@@ -32,14 +32,6 @@ type CmdInfo struct {
 	Read    bool
 }
 
-// posKinds is what each positional argument of a command is. Its length must equal the parser's npos.
-var posKinds = map[string][]string{
-	"show": {"ref"}, "pr show": {"ref"}, "claim": {"ref"}, "release": {"ref"}, "comment": {"ref"}, "close": {"ref"},
-	"reopen": {"ref"}, "label": {"ref"}, "edit": {"ref"}, "milestone": {"ref", "milestone"}, "milestones show": {"milestone"},
-	"milestones new": {"text"}, "labels new": {"text"}, "milestones edit": {"milestone"}, "milestones close": {"milestone"}, "milestones reopen": {"milestone"},
-	"outbox drop": {"op"}, "outbox retry": {"op"}, "outbox edit": {"op"},
-}
-
 var valueKinds = map[string]string{"repo": "repo", "label": "label", "add": "label", "remove": "label", "milestone": "milestone",
 	"body-file": "file", "depends-on": "ref", "limit": "number", "status": "status", "due": "date", "description-file": "file"}
 
@@ -62,8 +54,8 @@ func Describe() []CmdInfo {
 	var out []CmdInfo
 	for _, n := range names {
 		sp := cmds[n]
-		h := helpTexts[n]
-		ci := CmdInfo{Name: n, Summary: h.summary, Usage: h.usage, Pos: posKinds[n], Read: sp.read}
+		h := sp.help
+		ci := CmdInfo{Name: n, Summary: h.summary, Usage: h.usage, Pos: sp.pos, Read: sp.read}
 		hasFormat := false
 		for _, f := range sp.fls {
 			fi := FlagInfo{Name: f.name, Short: f.shortKey(), Takes: f.kind != 'b', Repeat: f.kind == 'a', Choices: f.choices, Default: f.def,
