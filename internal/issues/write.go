@@ -360,20 +360,19 @@ func toAny(l []string) []any {
 	return out
 }
 
-// labelArgs is the op args of `label`: the labels to add (checked against the repo's labels) and to remove.
-func (a *App) labelArgs(o *Opts) (map[string]any, error) {
-	add, rm := o.L["add"], o.L["remove"]
+// labels queues label changes on ref: add (checked against the repo's labels) and remove.
+func (a *App) labels(ref string, add, rm []string) (opResult, error) {
 	if len(add)+len(rm) == 0 {
-		return nil, die("label needs --add and/or --remove")
+		return opResult{}, die("label needs --add and/or --remove")
 	}
-	short, _, err := a.parseRef(o.Pos[0])
+	short, _, err := a.parseRef(ref)
 	if err != nil {
-		return nil, err
+		return opResult{}, err
 	}
 	if add, err = a.checkLabels(short, add); err != nil {
-		return nil, err
+		return opResult{}, err
 	}
-	return map[string]any{"add": toAny(add), "remove": toAny(rm)}, nil
+	return a.queueOp("label", ref, map[string]any{"add": toAny(add), "remove": toAny(rm)})
 }
 
 // opResult is what a queued write reports: the op id, the ref it landed on, and (close only) what happened to the agent's claim.
@@ -471,11 +470,12 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			a.printf("%s", r.line())
 			return nil
 		case "label":
-			la, err := a.labelArgs(o)
+			r, err := a.labels(o.Pos[0], o.L["add"], o.L["remove"])
 			if err != nil {
 				return err
 			}
-			args = la
+			a.printf("%s", r.line())
+			return nil
 		case "milestone":
 			r, err := a.setMilestone(o.Pos[0], o.Pos[1])
 			if err != nil {

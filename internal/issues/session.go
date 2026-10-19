@@ -1,7 +1,6 @@
 package issues
 
 import (
-	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -323,24 +322,6 @@ func stripFrontMatter(s string) string {
 	return s
 }
 
-// run executes a command handler and returns what it printed.
-func (s *Session) run(fn func(*App) error) (string, error) {
-	var buf bytes.Buffer
-	s.app.Out = &buf
-	defer func() { s.app.Out = io.Discard }()
-	err := fn(s.app)
-	return strings.TrimSpace(buf.String()), err
-}
-
-func newOpts(pos []string, kv ...string) *Opts {
-	o := &Opts{S: map[string]string{}, L: map[string][]string{}, B: map[string]bool{}, Seen: map[string]bool{}, Pos: pos}
-	for i := 0; i+1 < len(kv); i += 2 {
-		o.S[kv[i]] = kv[i+1]
-		o.Seen[kv[i]] = true
-	}
-	return o
-}
-
 // Claim takes a claim like `moon issues claim` with a 120m lease. A claim held by another agent returns ErrHeld, never forced.
 func (s *Session) Claim(ref, agent string) (string, error) {
 	msg, err := s.app.claim(ref, agent, 120*60, 0)
@@ -465,9 +446,7 @@ func (s *Session) SetMilestone(ref, title string) error {
 
 // Label queues label changes like `moon issues label <ref> --add A --remove B`.
 func (s *Session) Label(ref string, add, remove []string) error {
-	o := newOpts([]string{ref})
-	o.L["add"], o.L["remove"] = add, remove
-	_, err := s.run(func(a *App) error { return a.cmdSimple("label")(o) })
+	_, err := s.app.labels(ref, add, remove)
 	return err
 }
 
