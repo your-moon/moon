@@ -144,17 +144,8 @@ func TestNumbersNeverReused(t *testing.T) {
 	eq(t, "after close", refOf(t, out), "app#L-4")
 
 	// pushing lands them in localmap and drains the outbox; the numbers stay taken
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		switch {
-		case args[0] == "api":
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "issue" && args[1] == "create":
-			return "https://github.com/example/app/issues/" + strconv.Itoa(100+e.gh.callCount()) + "\n", nil
-		}
-		return "", nil
-	}
+	g := e.useMem()
+	g.repo("example/app")
 	if o, _, code := e.run("push"); code != 0 {
 		t.Fatalf("push %d %s", code, o)
 	}
@@ -210,17 +201,8 @@ func TestLocalmapResolutionAfterPush(t *testing.T) {
 	eq(t, "ref", ref, "app#L-1")
 	out, _, _ = e.run("show", ref)
 	contains0(t, "pending show", out, "ref: app#L-1 (local, pending sync: not on GitHub yet)")
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		switch {
-		case args[0] == "api":
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "issue" && args[1] == "create":
-			return "https://github.com/example/app/issues/612\n", nil
-		}
-		return "", nil
-	}
+	g := e.useMem()
+	g.repo("example/app").nextNum = 611 // GitHub numbers the create 612
 	if _, _, code := e.run("push"); code != 0 {
 		t.Fatal("push")
 	}
@@ -279,6 +261,7 @@ func localEnv(t *testing.T) *env {
 func TestLocalOnlyRepo(t *testing.T) {
 	e := localEnv(t)
 	e.tick = true
+	g := e.useMem()
 	spawn := filepath.Join(t.TempDir(), "spawn.log")
 	e.extra = map[string]string{"ISSUES_TEST_SPAWN": spawn} // autosync enabled: it must skip local-only aliases
 	out, _, code := e.run("new", "--repo", "notes", "--title", "buy milk", "--body", "two litres", "--label", "home", "--milestone", "week1")
@@ -352,11 +335,11 @@ func TestLocalOnlyRepo(t *testing.T) {
 			t.Fatalf("%s: %d %q", cmd, code, errs)
 		}
 	}
-	if e.gh.callCount() != 0 {
-		t.Fatalf("gh called: %v", e.gh.calls)
+	if g.callCount() != 0 {
+		t.Fatalf("GitHub called: %v", g.calls)
 	}
 	// without --repo, local-only aliases are skipped silently next to GitHub-backed ones
-	e.gh.handler = func(args []string, stdin string) (string, error) { return "", &GhError{Msg: "offline"} }
+	g.hook = func(call, repo, ident string) error { return &GhError{Msg: "offline"} }
 	out, _, _ = e.run("push")
 	eq(t, "mixed push", out, "PUSH pushed=0 failed=0\n")
 	// the local-only file is never pruned, however old

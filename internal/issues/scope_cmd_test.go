@@ -78,7 +78,8 @@ func TestScopeDefaultsPerCommand(t *testing.T) {
 }
 
 func TestScopePullFollowsScope(t *testing.T) {
-	e := scopedEnv(t) // the fake gh has no handler: each pull fails and names its repo on stderr
+	e := scopedEnv(t) // GitHub refuses every pull: each fails and names its repo on stderr
+	e.useMem().hook = func(call, repo, ident string) error { return &GhError{Msg: "offline"} }
 	_, errs, _ := e.run("pull")
 	if !strings.Contains(errs, "pull app failed") || strings.Contains(errs, "pull lib failed") {
 		t.Errorf("scoped pull: %q", errs)

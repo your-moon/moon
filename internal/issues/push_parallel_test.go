@@ -4,68 +4,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
-
-// latencyGH makes every gh call take d, and records how many ran at once and the start/end order per issue.
-type latencyGH struct {
-	mu        sync.Mutex
-	inflight  int
-	maxFlight int
-	log       []string
-}
-
-func (l *latencyGH) handler(d time.Duration, fail map[string]bool) func([]string, string) (string, error) {
-	return func(args []string, stdin string) (string, error) {
-		key := ""
-		switch {
-		case args[0] == "api":
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "issue" && args[1] == "create":
-			key = "create"
-		default:
-			key = args[1] + " " + args[2]
-		}
-		l.mu.Lock()
-		l.inflight++
-		l.maxFlight = max(l.maxFlight, l.inflight)
-		l.log = append(l.log, "start "+key)
-		l.mu.Unlock()
-		time.Sleep(d)
-		l.mu.Lock()
-		l.inflight--
-		l.log = append(l.log, "end "+key)
-		l.mu.Unlock()
-		if fail[key] {
-			return "", &GhError{Msg: "boom " + key}
-		}
-		if key == "create" {
-			return "https://github.com/example/app/issues/50\n", nil
-		}
-		return "", nil
-	}
-}
-
-func (l *latencyGH) index(s string) int {
-	for i, x := range l.log {
-		if x == s {
-			return i
-		}
-	}
-	return -1
-}
 
 func TestPushOverlapsIndependentWrites(t *testing.T) {
 	restPush(t)
 	e := newEnv(t)
 	e.tick = true
-	e.gh.parallel = true
-	lat := &latencyGH{}
-	e.gh.handler = lat.handler(30*time.Millisecond, nil)
+	g := e.useMem()
+	g.delay = 30 * time.Millisecond
+	g.seed("example/app", 10, "2026-01-01T00:00:00Z")
 	for i := 1; i <= 10; i++ {
 		e.run("close", fmt.Sprintf("app#%d", i))
 	}
@@ -73,8 +22,8 @@ func TestPushOverlapsIndependentWrites(t *testing.T) {
 	if code != 0 || out != "PUSH pushed=10 failed=0\n" {
 		t.Fatalf("%d %q", code, out)
 	}
-	if lat.maxFlight < 2 || lat.maxFlight > pushWorkerLimit {
-		t.Fatalf("max in flight %d, want 2..%d", lat.maxFlight, pushWorkerLimit)
+	if g.maxFlight < 2 || g.maxFlight > pushWorkerLimit {
+		t.Fatalf("max in flight %d, want 2..%d", g.maxFlight, pushWorkerLimit)
 	}
 }
 
@@ -82,9 +31,9 @@ func TestPushKeepsOneIssuesWritesInOrder(t *testing.T) {
 	restPush(t)
 	e := newEnv(t)
 	e.tick = true
-	e.gh.parallel = true
-	lat := &latencyGH{}
-	e.gh.handler = lat.handler(20*time.Millisecond, nil)
+	g := e.useMem()
+	g.delay = 20 * time.Millisecond
+	g.seed("example/app", 3, "2026-01-01T00:00:00Z")
 	out, _, _ := e.run("new", "--repo", "app", "--title", "t", "--body", "b")
 	ref := refOf(t, out)
 	e.run("comment", ref, "--body", "c")
@@ -95,18 +44,24 @@ func TestPushKeepsOneIssuesWritesInOrder(t *testing.T) {
 	if out, _, code := e.run("push"); code != 0 || out != "PUSH pushed=6 failed=0\n" {
 		t.Fatalf("%d %q", code, out)
 	}
-	// the chain runs create, comment, close (the real number is 50), each after the one before ended
-	chain := []string{"start create", "end create", "start comment 50", "end comment 50", "start close 50", "end close 50"}
+	// the chain runs create, comment, close (the real number is 101); a write applied before the create
+	// landed could not name the issue, so the log shows the order each write was applied in
+	chain := []string{"create", "rest-comment 101", "rest-close 101"}
 	last := -1
 	for _, c := range chain {
-		i := lat.index(c)
+		i := -1
+		for k, l := range g.log {
+			if l == c {
+				i = k
+			}
+		}
 		if i <= last {
-			t.Fatalf("%q out of order in %v", c, lat.log)
+			t.Fatalf("%q out of order in %v", c, g.log)
 		}
 		last = i
 	}
-	if lat.maxFlight < 2 {
-		t.Fatalf("the independent closes did not overlap with the chain: %v", lat.log)
+	if g.maxFlight < 2 {
+		t.Fatalf("the independent closes did not overlap with the chain: %v", g.log)
 	}
 }
 
@@ -114,13 +69,14 @@ func TestPushFailureStaysPerOp(t *testing.T) {
 	restPush(t)
 	e := newEnv(t)
 	e.tick = true
-	e.gh.parallel = true
-	lat := &latencyGH{}
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		if args[0] == "issue" && args[1] == "close" && args[2] == "2" {
-			return "", &GhError{Msg: "boom"}
+	g := e.useMem()
+	g.delay = 5 * time.Millisecond
+	g.seed("example/app", 5, "2026-01-01T00:00:00Z")
+	g.hook = func(call, repo, ident string) error {
+		if call == "CloseIssue" && ident == "2" {
+			return &GhError{Msg: "boom"}
 		}
-		return lat.handler(5*time.Millisecond, nil)(args, stdin)
+		return nil
 	}
 	for i := 1; i <= 5; i++ {
 		e.run("close", fmt.Sprintf("app#%d", i))
@@ -130,6 +86,9 @@ func TestPushFailureStaysPerOp(t *testing.T) {
 	ops := e.app().loadOutbox()
 	if len(ops) != 1 || ops[0].Ref != "app#2" || ops[0].LastError == nil || !strings.Contains(*ops[0].LastError, "boom") || ops[0].Attempts != 1 {
 		t.Fatalf("%+v", ops)
+	}
+	if i := g.issue("example/app", 3); i.state != "CLOSED" {
+		t.Fatalf("the other closes must still land: %+v", i)
 	}
 }
 
@@ -179,8 +138,9 @@ func TestPushPoolSizes(t *testing.T) {
 	for _, n := range []int{1, 2, 4, 8, 16} {
 		e := newEnv(t)
 		e.tick = true
-		e.gh.parallel = true
-		e.gh.handler = (&latencyGH{}).handler(100*time.Millisecond, nil)
+		g := e.useMem()
+		g.delay = 100 * time.Millisecond
+		g.seed("example/app", 12, "2026-01-01T00:00:00Z")
 		old := pushWorkers
 		pushWorkers = n
 		for i := 1; i <= 12; i++ {

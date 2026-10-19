@@ -118,15 +118,13 @@ func TestShowJSONFollowsLandedLocalRef(t *testing.T) {
 func TestShowJSONLiveFetchForPrunedIssue(t *testing.T) {
 	e := newEnv(t)
 	e.write("app/index.tsv", "12\tclosed\t\tbug\t2025-01-01T00:00:00Z\told\n") // listed, file pruned
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		return `{"data":{"repository":{"issue":{"number":12,"title":"old","body":"from github","state":"CLOSED","labels":{"nodes":[{"name":"bug"}]},` +
-			`"assignees":{"nodes":[{"login":"sam"}]},"comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`, nil
-	}
+	g := e.useMem()
+	g.put("example/app", memIssue{num: 12, title: "old", body: "from github", state: "CLOSED", labels: []string{"bug"}, assignees: []string{"sam"}})
 	m := showJSONOf(t, e, "app#12")
 	eq(t, "body", m["body"].(string), "from github")
 	eq(t, "state", m["state"].(string), "closed")
 	eq(t, "assignees", mustJSON(m["assignees"]), `["sam"]`)
-	e.gh.handler = func([]string, string) (string, error) { return "", &GhError{Msg: "offline"} }
+	g.hook = func(call, repo, ident string) error { return &GhError{Msg: "offline"} }
 	_, errs, code := e.run("show", "app#12", "--format", "json")
 	if code != 1 || !strings.Contains(errs, "live fetch failed: offline") {
 		t.Fatalf("code=%d err=%q", code, errs)

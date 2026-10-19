@@ -12,12 +12,15 @@ func TestPermanentErrorIsNotRetried(t *testing.T) {
 	e.run("close", "app#1")
 	e.run("close", "app#2")
 	e.run("close", "lib#3")
+	g := e.useMem()
+	g.seed("example/app", 2, "2026-01-01T00:00:00Z")
+	g.seed("example/lib", 3, "2026-01-01T00:00:00Z")
 	disabled := true
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		if args[0] == "issue" && args[4] == "example/app" && disabled {
-			return "", &GhError{Msg: "the 'example/app' repository has disabled issues"}
+	g.hook = func(call, repo, ident string) error {
+		if call == "CloseIssue" && repo == "example/app" && disabled {
+			return &GhError{Msg: "the 'example/app' repository has disabled issues"}
 		}
-		return "", nil
+		return nil
 	}
 	out, _, _ := e.run("push")
 	eq(t, "first push", out, "PUSH pushed=1 failed=2\n")
@@ -31,10 +34,10 @@ func TestPermanentErrorIsNotRetried(t *testing.T) {
 		}
 	}
 	// the second push neither tries them nor counts them
-	before := e.gh.callCount()
+	before := g.callCount()
 	out, _, _ = e.run("push")
 	eq(t, "second push", out, "PUSH pushed=0 failed=0\n")
-	if e.gh.callCount() != before {
+	if g.callCount() != before {
 		t.Fatal("a permanent op was sent again")
 	}
 	if o, _, _ := e.run("outbox", "ls"); !strings.Contains(o, "permanent, no retry: the 'example/app' repository has disabled issues") {
@@ -55,7 +58,9 @@ func TestPermanentErrorIsNotRetried(t *testing.T) {
 func TestTemporaryErrorIsRetried(t *testing.T) {
 	e := newEnv(t)
 	e.run("close", "app#1")
-	e.gh.handler = func(args []string, stdin string) (string, error) { return "", &GhError{Msg: "HTTP 502"} }
+	g := e.useMem()
+	g.seed("example/app", 1, "2026-01-01T00:00:00Z")
+	g.hook = func(call, repo, ident string) error { return &GhError{Msg: "HTTP 502"} }
 	e.run("push")
 	out, _, _ := e.run("push")
 	eq(t, "retried", out, "PUSH pushed=0 failed=1\n")
@@ -68,11 +73,13 @@ func TestSyncSkipsLocalOnlyRepoWithQueuedOps(t *testing.T) {
 	e := newEnv(t)
 	e.run("close", "lib#3")
 	e.write("../moon.toml", "mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\nlocal = true\n")
-	e.gh.handler = func(args []string, stdin string) (string, error) { return "", nil }
+	g := e.useMem()
 	e.run("sync", "--all", "--quiet")
 	e.run("push", "--all")
-	if n := e.gh.count("issue"); n != 0 { // the pull of app is a graphql call
-		t.Fatalf("gh was called %d times for a local-only repo: %v", n, e.gh.calls)
+	for _, c := range g.calls { // only the pull of app may reach GitHub
+		if !strings.HasPrefix(c, "Pull") {
+			t.Fatalf("GitHub was called for a local-only repo: %v", g.calls)
+		}
 	}
 	if len(e.app().loadOutbox()) != 1 {
 		t.Fatal("the queued write must stay")
@@ -156,8 +163,10 @@ func TestAutosyncOffStopsTheBackgroundPushAfterAWrite(t *testing.T) {
 func TestPermanentOpDoesNotKickABackgroundPush(t *testing.T) {
 	e := newEnv(t)
 	e.run("close", "app#1")
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		return "", &GhError{Msg: "the 'example/app' repository has disabled issues"}
+	g := e.useMem()
+	g.seed("example/app", 1, "2026-01-01T00:00:00Z")
+	g.hook = func(call, repo, ident string) error {
+		return &GhError{Msg: "the 'example/app' repository has disabled issues"}
 	}
 	e.run("push")
 	if ops := e.app().loadOutbox(); len(ops) != 1 || !ops[0].Permanent {

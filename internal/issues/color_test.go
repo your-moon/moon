@@ -1,7 +1,6 @@
 package issues
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -343,20 +342,13 @@ func TestPullWritesLabelColors(t *testing.T) {
 		"updatedAt": "2026-02-02T00:00:00Z", "id": "I5", "author": map[string]any{"login": "al"}, "milestone": nil,
 		"assignees": map[string]any{"nodes": []any{}}, "labels": map[string]any{"nodes": []any{map[string]any{"name": "bug"}}},
 		"comments": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{}}}
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		var req struct{ Query string }
-		json.Unmarshal([]byte(stdin), &req)
-		if strings.Contains(req.Query, "pullRequests(") && !strings.Contains(req.Query, "issues(") {
-			return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
-				"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{}}}}}), nil
-		}
-		return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{
-			"labels": map[string]any{"nodes": []any{
-				map[string]any{"name": "kind:bug", "color": "d73a4a", "description": "Something\tis broken"},
-				map[string]any{"name": "wontfix", "color": "ffffff", "description": nil}}},
-			"milestones": map[string]any{"nodes": []any{}},
-			"issues":     map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{issue}}}}}), nil
-	}
+	e.useMem().cannedPull(t, "example/app", map[string]any{
+		"labels": map[string]any{"nodes": []any{
+			map[string]any{"name": "kind:bug", "color": "d73a4a", "description": "Something\tis broken"},
+			map[string]any{"name": "wontfix", "color": "ffffff", "description": nil}}},
+		"milestones":   map[string]any{"nodes": []any{}},
+		"issues":       map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{issue}},
+		"pullRequests": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{}}})
 	e.now = time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)
 	if _, errs, code := e.run("pull", "--repo", "app"); code != 0 {
 		t.Fatal(code, errs)

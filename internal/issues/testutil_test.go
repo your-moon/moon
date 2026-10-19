@@ -7,47 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
-
-// fakeGH is the argv-level fake: a handler answers each gh command line. The typed GitHub methods come from cliGH over Run. Nothing here talks to a network.
-type fakeGH struct {
-	mu       sync.Mutex
-	hmu      sync.Mutex // serialises handler calls (they keep plain test state), unless parallel
-	parallel bool
-	calls    [][]string
-	handler  func(args []string, stdin string) (string, error)
-	cliGH    // the typed GitHub, spoken through Run: the shim that keeps argv-parsing handlers working
-}
-
-func newFakeGH() *fakeGH {
-	f := &fakeGH{}
-	f.cliGH = cliGH{run: f.Run}
-	return f
-}
-
-func (f *fakeGH) Run(args []string, stdin string, _ time.Duration) (string, error) {
-	f.mu.Lock()
-	f.calls = append(f.calls, append([]string{}, args...))
-	h := f.handler
-	f.mu.Unlock()
-	if h == nil {
-		return "", &GhError{Msg: "fake: no handler"}
-	}
-	if !f.parallel {
-		f.hmu.Lock()
-		defer f.hmu.Unlock()
-	}
-	return h(args, stdin)
-}
-
-func (f *fakeGH) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
 
 // serialPush makes push send one write at a time, for tests that assert the global order of gh calls.
 func serialPush(t *testing.T) {
@@ -64,22 +26,11 @@ func restPush(t *testing.T) {
 	t.Cleanup(func() { pushBatch = old })
 }
 
-func (f *fakeGH) count(prefix ...string) int {
-	n := 0
-	for _, c := range f.calls {
-		if len(c) >= len(prefix) && strings.Join(c[:len(prefix)], " ") == strings.Join(prefix, " ") {
-			n++
-		}
-	}
-	return n
-}
-
 type env struct {
 	t     *testing.T
 	home  string
 	cfg   string
-	gh    *fakeGH
-	mem   *memGH // when set, the command talks to this in-memory GitHub instead of gh
+	mem   *memGH // the in-memory GitHub every command talks to (repos example/app and example/lib exist)
 	now   time.Time
 	extra map[string]string
 	tick  bool
@@ -93,7 +44,7 @@ func newEnv(t *testing.T) *env {
 	d := t.TempDir()
 	cfg := filepath.Join(d, "moon.toml")
 	os.WriteFile(cfg, []byte("mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\ngithub = \"example/lib\"\n"), 0o644)
-	return &env{t: t, home: filepath.Join(d, "mirror"), cfg: cfg, gh: newFakeGH(), now: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
+	return &env{t: t, home: filepath.Join(d, "mirror"), cfg: cfg, mem: newMemGH(), now: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
 		extra: map[string]string{"ISSUES_NO_AUTOSYNC": "1"}}
 }
 
@@ -115,17 +66,12 @@ func (e *env) runIn(stdin string, args ...string) (string, string, int) {
 	return out.String(), errb.String(), code
 }
 
-func (e *env) github() GitHub {
-	if e.mem != nil {
-		return e.mem
-	}
-	return e.gh
-}
+func (e *env) github() GitHub { return e.mem }
 
-// useMem runs the env against an in-memory GitHub holding example/app.
+// useMem is the env's in-memory GitHub, holding example/app and example/lib.
 func (e *env) useMem() *memGH {
-	e.mem = newMemGH()
 	e.mem.repo("example/app")
+	e.mem.repo("example/lib")
 	return e.mem
 }
 
@@ -156,6 +102,13 @@ func (e *env) write(rel, content string) {
 	p := filepath.Join(e.home, rel)
 	os.MkdirAll(filepath.Dir(p), 0o755)
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// writeConfig replaces the config file (moon.toml next to the mirror).
+func (e *env) writeConfig(text string) {
+	if err := os.WriteFile(e.cfg, []byte(text), 0o644); err != nil {
 		e.t.Fatal(err)
 	}
 }
