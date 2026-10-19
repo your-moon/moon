@@ -64,13 +64,13 @@ func TestTableDrivesParser(t *testing.T) {
 		if sp == nil {
 			t.Fatalf("Describe lists %q but the dispatcher has no such command", ci.Name)
 		}
-		if len(ci.Pos) != sp.npos {
-			t.Errorf("%s: %d positional kinds, parser wants %d", ci.Name, len(ci.Pos), sp.npos)
+		if len(ci.Pos) != len(sp.pos) {
+			t.Errorf("%s: %d positional kinds, parser wants %d", ci.Name, len(ci.Pos), len(sp.pos))
 		}
-		if _, ok := helpTexts[ci.Name]; !ok {
+		if sp.help.summary == "" || sp.help.usage == "" {
 			t.Errorf("%s has no help entry", ci.Name)
 		}
-		pos := make([]string, sp.npos)
+		pos := make([]string, len(sp.pos))
 		for i := range pos {
 			pos[i] = "x"
 		}

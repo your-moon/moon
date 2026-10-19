@@ -767,7 +767,8 @@ func TestShortFlagsInHelp(t *testing.T) {
 			t.Errorf("ls --help lacks %q:\n%s", want, out)
 		}
 	}
-	for name, h := range helpTexts {
+	for name, sp := range commands() {
+		h := sp.help
 		if strings.Contains(h.examples[0]+h.examples[1], "--sort") || strings.Contains(h.examples[0]+h.examples[1], "--limit") {
 			t.Errorf("%s: examples should use the short forms", name)
 		}

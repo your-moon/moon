@@ -1,16 +1,13 @@
 package issues
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -29,7 +26,9 @@ func (f flset) with(more ...[]fl) flset { return append(f, cat(more...)...) }
 
 type spec struct {
 	fls  []fl
-	npos int
+	pos  []string // kinds of the positional arguments (ref, milestone, text, op); its length is how many the parser wants
+	help helpEntry
+	list bool // prints a list: on a terminal it starts with the scope header
 	read bool // read command: autosync runs first
 	run  func(a *App, o *Opts) error
 }
@@ -69,52 +68,52 @@ func cat(l ...[]fl) []fl {
 func commands() map[string]*spec {
 	one := func(f ...fl) flset { return f }
 	m := map[string]*spec{
-		"ls": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
+		"ls": {help: helpEntry{"list issues from the local mirror, with their work status", "moon issues ls [--repo R] [--state open|closed|all] [--label L] [--milestone M] [-q text] [-w] [-i] [--status S[,S]] [-B full|short|none]", [2]string{"moon issues ls -L bug -s up -l 10", "moon issues ls -w   # what agents are working on; -i = idle, -s status = by status"}}, list: true, fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
 			fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}, fl{name: "q", short: "q", kind: 's'}).with(fmtFls(), issueListFls()), read: true, run: (*App).cmdLs},
-		"show": {fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), npos: 1, read: true, run: (*App).cmdShow},
-		"milestones": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}}).with(fmtFls(),
+		"show": {pos: []string{"ref"}, help: helpEntry{"print one issue with its comments", "moon issues show <ref>", [2]string{"moon issues show app#12", "moon issues show app#L-20260301120000-ab12   # an issue not pushed yet"}}, fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), read: true, run: (*App).cmdShow},
+		"milestones": {help: helpEntry{"list milestones with progress (open ones on a terminal, all when piped)", "moon issues milestones [--repo R] [--state open|closed|all] [--sort due|progress|title|open] [-r] [--limit N]", [2]string{"moon issues milestones -s due", "moon issues milestones -S all -j"}}, list: true, fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}}).with(fmtFls(),
 			[]fl{{name: "sort", kind: 's', choices: []string{"due", "progress", "title", "open"}}, {name: "reverse", short: "r", kind: 'b'}, {name: "limit", kind: 's'}}),
 			read: true, run: (*App).cmdMilestones},
-		"milestones show": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
-			fl{name: "label", kind: 's'}).with(fmtFls(), issueListFls()), npos: 1, read: true, run: (*App).cmdMilestoneShow},
-		"milestones new": {fls: one(repoFl(), fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'}, fl{name: "description-file", kind: 's'}),
-			npos: 1, run: (*App).cmdMsNew},
-		"milestones edit": {fls: one(repoFl(), fl{name: "title", kind: 's'}, fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'},
-			fl{name: "description-file", kind: 's'}), npos: 1, run: (*App).cmdMsEdit},
-		"labels new":        {fls: one(repoFl(), fl{name: "color", kind: 's'}, fl{name: "description", kind: 's'}), npos: 1, run: (*App).cmdLabelNew},
-		"milestones close":  {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_close")(o) }},
-		"milestones reopen": {fls: one(repoFl()), npos: 1, run: func(a *App, o *Opts) error { return a.cmdMsState("ms_reopen")(o) }},
-		"prs": {fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "merged", "closed", "all"}, def: "open"},
+		"milestones show": {pos: []string{"milestone"}, help: helpEntry{"one milestone's progress and its issues", "moon issues milestones show <title> [--repo R] [--state open|closed|all] [--label L] [--sort ...] [--limit N]", [2]string{"moon issues milestones show v1.0", "moon issues milestones show v1 -S all -s t   # a unique prefix is enough"}}, list: true, fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "closed", "all"}, def: "open"},
+			fl{name: "label", kind: 's'}).with(fmtFls(), issueListFls()), read: true, run: (*App).cmdMilestoneShow},
+		"milestones new": {pos: []string{"text"}, help: helpEntry{"create a milestone (queued locally as M-<n>; sync creates it on GitHub before the issues that use it)", "moon issues milestones new <title> [-d YYYY-MM-DD] [-D text | --description-file F|-] [-R repo]", [2]string{"moon issues milestones new \"v1.0\" -d 2026-12-31 -D \"first public release\"", "moon issues milestones new \"auth rewrite\" --description-file plan.md -R app   # then: moon issues new -R app -m M-1 ..."}}, fls: one(repoFl(), fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'}, fl{name: "description-file", kind: 's'}),
+			run: (*App).cmdMsNew},
+		"milestones edit": {pos: []string{"milestone"}, help: helpEntry{"change a milestone's title, due date or description (queued, sent by sync)", "moon issues milestones edit <title|M-n> [--title T] [-d YYYY-MM-DD|none] [-D text | --description-file F|-] [-R repo]", [2]string{"moon issues milestones edit v1.0 -d 2027-01-31", "moon issues milestones edit M-2 --title \"auth rewrite v2\" -d none -D \"scope cut\""}}, fls: one(repoFl(), fl{name: "title", kind: 's'}, fl{name: "due", kind: 's'}, fl{name: "description", kind: 's'},
+			fl{name: "description-file", kind: 's'}), run: (*App).cmdMsEdit},
+		"labels new":        {pos: []string{"text"}, help: helpEntry{"create a label (queued locally; sync creates it on GitHub before the issues that use it)", "moon issues labels new <name> [--color RRGGBB] [-D text] [-R repo]", [2]string{"moon issues labels new area::sim --color 1d76db", "moon issues labels new area::sim -R falcon && moon issues new -R falcon -L area::sim ..."}}, fls: one(repoFl(), fl{name: "color", kind: 's'}, fl{name: "description", kind: 's'}), run: (*App).cmdLabelNew},
+		"milestones close":  {pos: []string{"milestone"}, help: helpEntry{"close a milestone (queued, sent by sync)", "moon issues milestones close <title|M-n> [-R repo]", [2]string{"moon issues milestones close v1.0", "moon issues milestones close M-2 -R app"}}, fls: one(repoFl()), run: func(a *App, o *Opts) error { return a.cmdMsState("ms_close")(o) }},
+		"milestones reopen": {pos: []string{"milestone"}, help: helpEntry{"reopen a closed milestone (queued, sent by sync)", "moon issues milestones reopen <title|M-n> [-R repo]", [2]string{"moon issues milestones reopen v1.0", "moon issues milestones reopen M-2 -R app"}}, fls: one(repoFl()), run: func(a *App, o *Opts) error { return a.cmdMsState("ms_reopen")(o) }},
+		"prs": {help: helpEntry{"list pull requests from the mirror", "moon issues prs [--repo R] [--state open|merged|closed|all] [--since ISO] [--json]", [2]string{"moon issues prs -S merged --since 2026-01-01T00:00:00Z", "moon issues prs -S all -s up -l 5"}}, list: true, fls: one(repoFl(), freshFl(), fl{name: "state", kind: 's', choices: []string{"open", "merged", "closed", "all"}, def: "open"},
 			fl{name: "since", kind: 's'}, fl{name: "json", kind: 'b'}).with(fmtFls(), sortFls()), read: true, run: (*App).cmdPRs},
-		"pr show":  {fls: one(freshFl()), npos: 1, read: true, run: (*App).cmdPRShow},
-		"frontier": {fls: one(repoFl(), freshFl(), fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}).with(fmtFls(), issueListFls()), read: true, run: (*App).cmdFrontier},
-		"claim": {fls: one(fl{name: "agent", kind: 's', req: true}, fl{name: "ttl", kind: 's'}, fl{name: "pid", kind: 's', def: "0"}),
-			npos: 1, run: (*App).cmdClaim},
-		"release": {fls: one(fl{name: "agent", kind: 's'}, fl{name: "force", kind: 'b'}), npos: 1, run: (*App).cmdRelease},
-		"claims":  {fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), read: true, run: (*App).cmdClaims},
-		"sweep":   {fls: one(freshFl(), fl{name: "release", kind: 'b'}, fl{name: "live", kind: 'b'}, fl{name: "agent", kind: 's'}).with(fmtFls()), read: true, run: (*App).cmdSweep},
-		"status":  {fls: fmtFls(), run: (*App).cmdStatus},
-		"new": {fls: cat(one(repoFl(), fl{name: "title", kind: 's', req: true}, fl{name: "label", kind: 'a'},
+		"pr show":  {pos: []string{"ref"}, help: helpEntry{"print one pull request", "moon issues pr show <ref>", [2]string{"moon issues pr show app#31", "moon issues pr show lib#4"}}, fls: one(freshFl()), read: true, run: (*App).cmdPRShow},
+		"frontier": {help: helpEntry{"open issues nobody has claimed", "moon issues frontier [--repo R] [--label L] [--milestone M] [-i] [--status S[,S]] [-B full|short|none]", [2]string{"moon issues frontier -L kind:bug", "moon issues frontier -s t -l 5   # or just: moon issues frontier 5"}}, list: true, fls: one(repoFl(), freshFl(), fl{name: "label", kind: 's'}, fl{name: "milestone", kind: 's'}).with(fmtFls(), issueListFls()), read: true, run: (*App).cmdFrontier},
+		"claim": {pos: []string{"ref"}, help: helpEntry{"claim an issue for an agent (exit 3 when someone else holds it)", "moon issues claim <ref> --agent NAME [--ttl 120m] [--pid N]   (--ttl default: claim_ttl in moon.toml, else 120m; claim again with the same --agent to renew the lease)", [2]string{"moon issues claim app#12 -a alice", "moon issues claim app#12 -a alice --ttl 30m"}}, fls: one(fl{name: "agent", kind: 's', req: true}, fl{name: "ttl", kind: 's'}, fl{name: "pid", kind: 's', def: "0"}),
+			run: (*App).cmdClaim},
+		"release": {pos: []string{"ref"}, help: helpEntry{"drop a claim", "moon issues release <ref> (--agent NAME | --force)", [2]string{"moon issues release app#12 -a alice", "moon issues release app#12 --force"}}, fls: one(fl{name: "agent", kind: 's'}, fl{name: "force", kind: 'b'}), run: (*App).cmdRelease},
+		"claims":  {help: helpEntry{"list claims with the work status of their issue (a claim on a closed issue is flagged)", "moon issues claims [--show-status]", [2]string{"moon issues claims", "moon issues claims -j"}}, list: true, fls: one(freshFl(), fl{name: "show-status", kind: 'b'}).with(fmtFls()), read: true, run: (*App).cmdClaims},
+		"sweep":   {help: helpEntry{"list claims that are stale or on closed issues; --release removes them (dry run by default)", "moon issues sweep [--release] [--live] [--agent NAME]", [2]string{"moon issues sweep --release", "moon issues sweep --live --agent alice --release   # stop work: drop all of alice's claims"}}, list: true, fls: one(freshFl(), fl{name: "release", kind: 'b'}, fl{name: "live", kind: 'b'}, fl{name: "agent", kind: 's'}).with(fmtFls()), read: true, run: (*App).cmdSweep},
+		"status":  {help: helpEntry{"outbox, autosync (on or off, last run) and last-pull summary", "moon issues status", [2]string{"moon issues status", "moon issues status -t"}}, list: true, fls: fmtFls(), run: (*App).cmdStatus},
+		"new": {help: helpEntry{"queue a new issue (sent by sync)", "moon issues new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--depends-on REF ...] [--now] [--allow-empty-body]", [2]string{"moon issues new --repo app --title \"login: button is dead\" --body \"steps...\" --label bug", "echo details | moon issues new --repo app --title \"docs: typo\" --body-file - --now"}}, fls: cat(one(repoFl(), fl{name: "title", kind: 's', req: true}, fl{name: "label", kind: 'a'},
 			fl{name: "milestone", kind: 's'}, fl{name: "now", kind: 'b'}, fl{name: "depends-on", kind: 'a'}, emptyBodyFl()), bodyFls()), run: (*App).cmdNew},
-		"comment": {fls: bodyFls(), npos: 1, run: func(a *App, o *Opts) error { return a.cmdSimple("comment")(o) }},
-		"close": {fls: one(fl{name: "reason", kind: 's', choices: []string{"completed", "not_planned"}, def: "completed"},
-			fl{name: "comment", kind: 's'}, fl{name: "agent", kind: 's'}), npos: 1, run: func(a *App, o *Opts) error { return a.cmdSimple("close")(o) }},
-		"reopen": {npos: 1, run: func(a *App, o *Opts) error { return a.cmdSimple("reopen")(o) }},
-		"label": {fls: one(fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}), npos: 1,
+		"comment": {pos: []string{"ref"}, help: helpEntry{"queue a comment", "moon issues comment <ref> (--body B | --body-file F|-)", [2]string{"moon issues comment app#12 --body \"on it\"", "moon issues comment app#12 --body-file notes.md"}}, fls: bodyFls(), run: func(a *App, o *Opts) error { return a.cmdSimple("comment")(o) }},
+		"close": {pos: []string{"ref"}, help: helpEntry{"queue closing an issue", "moon issues close <ref> [--reason completed|not_planned] [--comment C] [--agent NAME]", [2]string{"moon issues close app#12", "moon issues close app#12 -a alice --reason not_planned --comment \"duplicate of #9\""}}, fls: one(fl{name: "reason", kind: 's', choices: []string{"completed", "not_planned"}, def: "completed"},
+			fl{name: "comment", kind: 's'}, fl{name: "agent", kind: 's'}), run: func(a *App, o *Opts) error { return a.cmdSimple("close")(o) }},
+		"reopen": {pos: []string{"ref"}, help: helpEntry{"queue reopening an issue", "moon issues reopen <ref>", [2]string{"moon issues reopen app#12", "moon issues reopen lib#3"}}, run: func(a *App, o *Opts) error { return a.cmdSimple("reopen")(o) }},
+		"label": {pos: []string{"ref"}, help: helpEntry{"queue label changes", "moon issues label <ref> [--add L ...] [--remove L ...]", [2]string{"moon issues label app#12 --add bug --add urgent", "moon issues label app#12 --remove urgent"}}, fls: one(fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}),
 			run: func(a *App, o *Opts) error { return a.cmdSimple("label")(o) }},
-		"milestone": {npos: 2, run: func(a *App, o *Opts) error { return a.cmdSimple("milestone")(o) }},
-		"edit": {fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "depends-on", kind: 'a'}, emptyBodyFl()), bodyFls()), npos: 1,
+		"milestone": {pos: []string{"ref", "milestone"}, help: helpEntry{"queue setting a milestone (use none to clear)", "moon issues milestone <ref> <title|none>", [2]string{"moon issues milestone app#12 v1.0", "moon issues milestone app#12 none"}}, run: func(a *App, o *Opts) error { return a.cmdSimple("milestone")(o) }},
+		"edit": {pos: []string{"ref"}, help: helpEntry{"queue a title or body edit", "moon issues edit <ref> [--title T] [--body B | --body-file F|-] [--depends-on REF ...|none] [--allow-empty-body]", [2]string{"moon issues edit app#12 --title \"login: button is dead on Safari\"", "moon issues edit app#12 --depends-on 9 --depends-on 10   # body gets: Depends on #9, #10"}}, fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "depends-on", kind: 'a'}, emptyBodyFl()), bodyFls()),
 			run: func(a *App, o *Opts) error { return a.cmdSimple("edit")(o) }},
-		"push":         {fls: one(repoFl()), run: (*App).cmdPush},
-		"pull":         {fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
-		"prune":        {fls: one(repoFl()), run: (*App).cmdPrune},
-		"sync":         {fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
-		"where":        {run: (*App).cmdWhere},
-		"outbox ls":    {fls: fmtFls(), run: (*App).cmdOutboxLs},
-		"outbox retry": {npos: 1, run: (*App).cmdOutboxRetry},
-		"outbox drop":  {fls: one(fl{name: "cascade", kind: 'b'}), npos: 1, run: (*App).cmdOutboxDrop},
-		"outbox edit": {fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "label", kind: 'a'}, fl{name: "milestone", kind: 's'},
-			fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}, emptyBodyFl()), bodyFls()), npos: 1, run: (*App).cmdOutboxEdit},
+		"push":         {help: helpEntry{"send queued writes to GitHub", "moon issues push [--repo R]", [2]string{"moon issues push", "moon issues push -R app"}}, fls: one(repoFl()), run: (*App).cmdPush},
+		"pull":         {help: helpEntry{"refresh the mirror from GitHub", "moon issues pull [--repo R] [--full]", [2]string{"moon issues pull", "moon issues pull -R app --full"}}, fls: one(repoFl(), fl{name: "full", kind: 'b'}), run: (*App).cmdPull},
+		"prune":        {help: helpEntry{"delete mirror files of old closed items", "moon issues prune [--repo R]", [2]string{"moon issues prune", "ISSUES_KEEP_DAYS=7 moon issues prune --repo app"}}, fls: one(repoFl()), run: (*App).cmdPrune},
+		"sync":         {help: helpEntry{"push, then pull", "moon issues sync [--repo R] [--quiet]", [2]string{"moon issues sync", "moon issues sync -R app --quiet"}}, fls: one(repoFl(), fl{name: "quiet", kind: 'b'}), run: (*App).cmdSync},
+		"where":        {help: helpEntry{"show which repos commands default to here, why, and which rule matched", "moon issues where [-R alias ...] [--all]", [2]string{"moon issues where", "moon issues where -R all   # what --all would look at"}}, run: (*App).cmdWhere},
+		"outbox ls":    {help: helpEntry{"list the queued writes with their last error (what sync will send)", "moon issues outbox [ls] [--repo R] [--format auto|table|tsv|json]", [2]string{"moon issues outbox", "moon issues outbox ls -j   # args included"}}, fls: fmtFls(), run: (*App).cmdOutboxLs},
+		"outbox retry": {pos: []string{"op"}, help: helpEntry{"send a write again that sync gave up on (GitHub said a retry cannot work)", "moon issues outbox retry <op>", [2]string{"moon issues outbox retry 3f9a1c2b", "moon issues outbox ls   # shows which writes sync gave up on, and why"}}, run: (*App).cmdOutboxRetry},
+		"outbox drop":  {pos: []string{"op"}, help: helpEntry{"remove a queued write; a queued new issue with writes queued on it needs --cascade", "moon issues outbox drop <op> [--cascade]", [2]string{"moon issues outbox drop 3f9a21c0", "moon issues outbox drop 3f9a21c0 --cascade   # also drop the writes queued on that new issue"}}, fls: one(fl{name: "cascade", kind: 'b'}), run: (*App).cmdOutboxDrop},
+		"outbox edit": {pos: []string{"op"}, help: helpEntry{"change a queued write that sync cannot send (a bad label on a new issue, a wrong title or body)", "moon issues outbox edit <op> [--title T] [--body B | --body-file F|-] [--label L ...] [--milestone M] [--add L ...] [--remove L ...] [--allow-empty-body]", [2]string{"moon issues outbox edit 3f9a21c0 --label bug --label area::web   # new: replaces its labels", "moon issues outbox edit 3f9a21c0 --body-file fixed.md   # <op> is a piece of the op id from outbox ls"}}, fls: cat(one(fl{name: "title", kind: 's'}, fl{name: "label", kind: 'a'}, fl{name: "milestone", kind: 's'},
+			fl{name: "add", kind: 'a'}, fl{name: "remove", kind: 'a'}, emptyBodyFl()), bodyFls()), run: (*App).cmdOutboxEdit},
 	}
 	// every command can be pointed at repos with -R (repeatable) and widened with --all; see scope.go
 	for _, sp := range m {
@@ -357,7 +356,7 @@ func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, e
 		}
 	}
 	// `moon issues ls 10`: a lone number is the limit
-	if lf := byName["--limit"]; lf != nil && sp.npos == 0 && len(o.Pos) == 1 && !o.Seen["limit"] {
+	if lf := byName["--limit"]; lf != nil && len(sp.pos) == 0 && len(o.Pos) == 1 && !o.Seen["limit"] {
 		if _, err := strconv.Atoi(o.Pos[0]); err == nil && o.Pos[0][0] != '-' {
 			if err := set(lf, o.Pos[0]); err != nil {
 				return nil, err
@@ -370,8 +369,8 @@ func parseOpts(sp *spec, name string, args []string, aliases []string) (*Opts, e
 			return nil, bad("the following arguments are required: --%s", f.name)
 		}
 	}
-	if len(o.Pos) != sp.npos {
-		return nil, bad("expected %d positional argument(s), got %d", sp.npos, len(o.Pos))
+	if len(o.Pos) != len(sp.pos) {
+		return nil, bad("expected %d positional argument(s), got %d", len(sp.pos), len(o.Pos))
 	}
 	return o, nil
 }
@@ -439,7 +438,7 @@ func Main(args []string, e Env) int {
 				name = "outbox " + rest[2]
 			}
 		}
-		if _, ok := helpTexts[name]; !ok {
+		if commands()[name] == nil {
 			fmt.Fprint(e.Err, unknownCommand(rest[1]))
 			return 2
 		}
@@ -530,7 +529,7 @@ func Main(args []string, e Env) int {
 		a.Scope = ResolveScope(e.Cwd, cfg, git, ScopeOpts{Flags: o.L["repo"], All: o.B["all"], Home: e.Getenv("HOME")})
 	}
 	delete(o.S, "repo") // from here on the scope is the only source of the repo filter
-	if takesRef(name) {
+	if sp.takesRef() {
 		ref, err := a.bareRef(o.Pos[0])
 		if err != nil {
 			fmt.Fprintln(e.Err, err)
@@ -542,14 +541,14 @@ func Main(args []string, e Env) int {
 	a.Color, a.Forced = caps.On, caps.Forced
 	a.St = NewStyler(caps, e.Getenv, cfg.Colors)
 	if sp.read {
-		if err := a.autosync(name, o, cfgPath); err != nil {
+		if err := a.BeforeRead(name, o); err != nil {
 			fmt.Fprintln(e.Err, err)
 			return 2
 		}
 	}
-	a.printScopeHeader(name, o)
+	a.printScopeHeader(sp, o)
 	if !sp.read && !noAutopush[name] {
-		defer a.kickPush() // after the write is queued, even when the command then fails
+		defer a.AfterWrite() // after the write is queued, even when the command then fails
 	}
 	if err := sp.run(a, o); err != nil {
 		if ee, ok := err.(*exitError); ok {
@@ -562,116 +561,6 @@ func Main(args []string, e Env) int {
 		return 1
 	}
 	return 0
-}
-
-// ---------- auto-refresh ----------
-
-func (a *App) mirrorAge(shorts []string) (float64, bool) {
-	var max float64
-	for _, s := range shorts {
-		b, err := readText(filepath.Join(a.Home, s, "lastpull"))
-		t, perr := strconv.Atoi(pyStrip(b))
-		if err != nil || perr != nil {
-			return 0, false
-		}
-		if age := float64(a.Now().UnixNano())/1e9 - float64(t); age > max {
-			max = age
-		}
-	}
-	return max, true
-}
-
-func (a *App) takeAutosyncMarker() bool {
-	os.MkdirAll(a.Home, 0o755)
-	path := filepath.Join(a.Home, ".autosync")
-	for i := 0; i < 2; i++ {
-		if err := createExcl(path, strconv.Itoa(os.Getpid())+"\n"); err == nil { // M_asmarker
-			return true
-		}
-		st, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		if time.Since(st.ModTime()).Seconds() <= autosyncMarkerStale { // M_asstale
-			return false
-		}
-		gone := path + ".stale." + uuid4()
-		if os.Rename(path, gone) == nil {
-			os.Remove(gone)
-		}
-	}
-	return false
-}
-
-func (a *App) autosync(name string, o *Opts, cfgPath string) error {
-	shorts := a.shortsFor(o)
-	if name == "show" || name == "pr show" {
-		s, _, err := a.parseRef(o.Pos[0])
-		if err != nil {
-			return err
-		}
-		shorts = []string{s}
-	}
-	shorts, _ = a.splitLocal(shorts) // local-only aliases have nothing to refresh
-	if len(shorts) == 0 {
-		return nil
-	}
-	if o.B["fresh"] { // M_fresh
-		a.doSync(shorts, false, a.Err, nil)
-		return nil
-	}
-	if off, _ := a.autosyncOff(); off {
-		return nil
-	}
-	age, ok := a.mirrorAge(shorts)
-	if ok && age <= autosyncMaxAge { // M_asage
-		return nil
-	}
-	if !a.takeAutosyncMarker() {
-		return nil
-	}
-	if err := a.SpawnSync(a); err != nil {
-		os.Remove(filepath.Join(a.Home, ".autosync"))
-		return nil
-	}
-	if ok {
-		fmt.Fprintf(a.Err, "(mirror %d min old; refreshing in background)\n", int(age)/60)
-	} else {
-		fmt.Fprintf(a.Err, "(mirror never pulled, so old; refreshing in background)\n")
-	}
-	return nil
-}
-
-// spawnSync starts `moon issues sync --quiet` fully detached, output appended to autosync.log.
-func spawnSync(a *App) error {
-	if f := a.Environ("ISSUES_TEST_SPAWN"); f != "" {
-		fh, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return err
-		}
-		fh.WriteString("spawn\n")
-		return fh.Close()
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if strings.HasSuffix(self, ".test") { // a go test binary would re-run its tests detached, and those spawn again
-		return errors.New("background sync: not from a test binary")
-	}
-	log, err := os.OpenFile(filepath.Join(a.Home, "autosync.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer log.Close()
-	cmd := exec.Command(self, "issues", "--dir", a.Home, "sync", "--quiet", "--all")
-	cmd.Stdout, cmd.Stderr = log, log
-	cmd.Env = append(os.Environ(), "ISSUES_NO_AUTOSYNC=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	return cmd.Process.Release()
 }
 
 // isOutboxSub: the words that follow `moon issues outbox`.

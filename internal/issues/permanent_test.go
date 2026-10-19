@@ -170,8 +170,8 @@ func TestPermanentOpDoesNotKickABackgroundPush(t *testing.T) {
 	if a.remoteOpsQueued() {
 		t.Fatal("a permanently failed op counts as sendable")
 	}
-	a.kickPush()
+	a.AfterWrite()
 	if _, err := os.Stat(spawn); err == nil {
-		t.Fatal("kickPush spawned a sync that can send nothing")
+		t.Fatal("AfterWrite spawned a sync that can send nothing")
 	}
 }

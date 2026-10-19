@@ -41,11 +41,8 @@ func (a *App) scopeNeedsOne(what string) (string, error) {
 	return "", die("%s needs one repo: %s. Pick one with -R <alias>; aliases: %s", what, where, strings.Join(a.Shorts(), ", "))
 }
 
-// takesRef: the command's first positional is an issue ref (posKinds is the one list of them).
-func takesRef(name string) bool {
-	k := posKinds[name]
-	return len(k) > 0 && k[0] == "ref"
-}
+// takesRef: the command's first positional is an issue ref (the pos kinds in the command table are the one list of them).
+func (sp *spec) takesRef() bool { return len(sp.pos) > 0 && sp.pos[0] == "ref" }
 
 // bareRef turns a bare number ("585", "#585", "L-3") into alias#N using the scope. A ref that has an alias is left alone.
 func (a *App) bareRef(ref string) (string, error) {
@@ -100,13 +97,9 @@ func (a *App) scopeHeader() string {
 	return a.P(cDim, fmt.Sprintf("scope: %s (%s)", a.Scope.Label(), a.Scope.Reason))
 }
 
-// listCommands print lists; on a terminal they start with the scope header.
-var listCommands = map[string]bool{"ls": true, "frontier": true, "prs": true, "milestones": true, "milestones show": true,
-	"claims": true, "status": true, "sweep": true}
-
 // printScopeHeader writes the header to stderr (like the "showing N of M" footer) when a table is going to a terminal.
-func (a *App) printScopeHeader(name string, o *Opts) {
-	if !a.TTY || a.Scope.Kind == "" || !listCommands[name] {
+func (a *App) printScopeHeader(sp *spec, o *Opts) {
+	if !a.TTY || a.Scope.Kind == "" || !sp.list {
 		return
 	}
 	switch f := o.str("format"); {
