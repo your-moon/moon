@@ -1,6 +1,7 @@
 package issues
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -75,5 +76,50 @@ func TestSyncSkipsLocalOnlyRepoWithQueuedOps(t *testing.T) {
 	}
 	if len(e.app().loadOutbox()) != 1 {
 		t.Fatal("the queued write must stay")
+	}
+}
+
+func TestAutosyncSwitchesAndStatus(t *testing.T) {
+	e := newEnv(t)
+	status := func() string { o, _, _ := e.run("status"); return o }
+	eq(t, "legacy env", strings.Split(status(), "\n")[1], "autosync: off (ISSUES_NO_AUTOSYNC)")
+	delete(e.extra, "ISSUES_NO_AUTOSYNC")
+	eq(t, "on, never ran", strings.Split(status(), "\n")[1], "autosync: on, has not run yet")
+	e.extra["MOON_AUTOSYNC"] = "0"
+	eq(t, "env off", strings.Split(status(), "\n")[1], "autosync: off (MOON_AUTOSYNC=0)")
+	delete(e.extra, "MOON_AUTOSYNC")
+	e.write("../moon.toml", "autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
+	eq(t, "config off", strings.Split(status(), "\n")[1], "autosync: off (autosync = false in moon.toml)")
+	e.extra["MOON_AUTOSYNC"] = "1"
+	eq(t, "env on beats config", strings.Split(status(), "\n")[1], "autosync: on, has not run yet")
+	e.write("autosync.log", "2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s\n")
+	eq(t, "last run", strings.Split(status(), "\n")[1], "autosync: on, last run 2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s")
+	if o, _, _ := e.run("status", "--format", "json"); !strings.Contains(o, `"autosync": {"on": true, "off_reason": null, "last_run": "2026-10-19T10:00:00 SYNC`) {
+		t.Fatal(o)
+	}
+}
+
+func TestAutosyncOffStopsTheBackgroundSpawn(t *testing.T) {
+	for _, off := range []map[string]string{{"MOON_AUTOSYNC": "0"}, {"ISSUES_NO_AUTOSYNC": "1"}} {
+		e := newEnv(t)
+		delete(e.extra, "ISSUES_NO_AUTOSYNC")
+		for k, v := range off {
+			e.extra[k] = v
+		}
+		spawn := e.home + "-spawn"
+		e.extra["ISSUES_TEST_SPAWN"] = spawn
+		seedIndex(e) // no lastpull: the mirror counts as never pulled
+		e.run("ls", "--repo", "app")
+		if _, err := os.Stat(spawn); err == nil {
+			t.Fatalf("%v: a read started a background sync", off)
+		}
+	}
+	e := newEnv(t)
+	delete(e.extra, "ISSUES_NO_AUTOSYNC")
+	e.extra["ISSUES_TEST_SPAWN"] = e.home + "-spawn"
+	seedIndex(e)
+	e.run("ls", "--repo", "app")
+	if _, err := os.Stat(e.extra["ISSUES_TEST_SPAWN"]); err != nil {
+		t.Fatal("control: with autosync on the read must spawn")
 	}
 }

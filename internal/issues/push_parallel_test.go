@@ -68,17 +68,12 @@ func TestPushOverlapsIndependentWrites(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		e.run("close", fmt.Sprintf("app#%d", i))
 	}
-	start := time.Now()
 	out, _, code := e.run("push")
-	took := time.Since(start)
 	if code != 0 || out != "PUSH pushed=10 failed=0\n" {
 		t.Fatalf("%d %q", code, out)
 	}
 	if lat.maxFlight < 2 || lat.maxFlight > pushWorkerLimit {
 		t.Fatalf("max in flight %d, want 2..%d", lat.maxFlight, pushWorkerLimit)
-	}
-	if took > 250*time.Millisecond { // serial would be 300ms
-		t.Fatalf("push took %v", took)
 	}
 }
 

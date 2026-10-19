@@ -1,4 +1,5 @@
 outbox: 0 queued, 0 errors
+autosync: off (ISSUES_NO_AUTOSYNC)
 app: last pull 0s ago, 5 issues
 lib: last pull 0s ago, 1 issues
 --- stderr ---

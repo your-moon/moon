@@ -50,7 +50,7 @@ var helpTexts = map[string]helpEntry{
 		[2]string{"moon issues claims", "moon issues claims -j"}},
 	"sweep": {"list claims that are stale or on closed issues; --release removes them (dry run by default)", "moon issues sweep [--release] [--live] [--agent NAME]",
 		[2]string{"moon issues sweep --release", "moon issues sweep --live --agent alice --release   # stop work: drop all of alice's claims"}},
-	"status": {"outbox and last-pull summary", "moon issues status",
+	"status": {"outbox, autosync (on or off, last run) and last-pull summary", "moon issues status",
 		[2]string{"moon issues status", "moon issues status -t"}},
 	"new": {"queue a new issue (sent by sync)", "moon issues new --repo R --title T (--body B | --body-file F|-) [--label L ...] [--milestone M] [--depends-on REF ...] [--now] [--allow-empty-body]",
 		[2]string{"moon issues new --repo app --title \"login: button is dead\" --body \"steps...\" --label bug", "echo details | moon issues new --repo app --title \"docs: typo\" --body-file - --now"}},

@@ -176,7 +176,10 @@ Projects and scope (moon issues where shows what applies here and why). Commands
   4. the git remote "origin", matched to a repo's github = "owner/name" (case-insensitive)
   5. otherwise every repo. A bare number (585, #585) means that repo; in all-repos mode it must exist in exactly one.
 Refs: <alias>#123, or <alias>#L-<id> for a local issue not pushed yet.
-Aliases come from [repos.<alias>] in moon.toml. Env: ISSUES_NO_AUTOSYNC, ISSUES_KEEP_DAYS, ISSUES_GH, NO_COLOR.
+Autosync: a read of an old mirror starts a background sync (it also sends the queued writes; log: <mirror>/autosync.log).
+  Turn it off: MOON_AUTOSYNC=0 (or ISSUES_NO_AUTOSYNC=1) in the environment, or autosync = false in moon.toml; MOON_AUTOSYNC=1
+  turns it on again over the file. "moon issues status" shows whether it is on and how its last run went. "moon issues sync" runs it by hand.
+Aliases come from [repos.<alias>] in moon.toml. Env: MOON_AUTOSYNC, ISSUES_NO_AUTOSYNC, ISSUES_KEEP_DAYS, ISSUES_GH, NO_COLOR.
 `
 
 // shortMap is the one set of short flags, the same in every command that has the flag. -j and -t are
@@ -613,7 +616,7 @@ func (a *App) autosync(name string, o *Opts, cfgPath string) error {
 		a.doSync(shorts, false, a.Err, nil)
 		return nil
 	}
-	if a.Environ("ISSUES_NO_AUTOSYNC") != "" {
+	if off, _ := a.autosyncOff(); off {
 		return nil
 	}
 	age, ok := a.mirrorAge(shorts)
