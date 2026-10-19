@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -212,7 +213,74 @@ func (a *App) rewriteRefs(old, new string) {
 	}
 }
 
-// push applies the outbox files in order, one attempt per op per run. Returns (pushed, failed, busy).
+// pushWorkerLimit is how many queued writes push sends at once. Each write is about one `gh` round trip
+// (3-4 s), so the wait of a sync was N round trips; independent writes now overlap (moon#17).
+const pushWorkerLimit = 4
+
+// pushWorkers is pushWorkerLimit; tests change it.
+var pushWorkers = pushWorkerLimit
+
+// orderKey is what a write must stay in order with: the writes of one issue (a `new` before its later edits,
+// labels and close, which carry its local ref until the create lands), and the milestone writes of one repo.
+func orderKey(o *Op) string {
+	if isMsOp(o.Op) {
+		return "ms:" + shortOf(o.Ref)
+	}
+	return o.Ref
+}
+
+// nextBatch is the writes that can go out now, at most limit: the first untried write of each order key,
+// unless it must wait for a queued milestone. A write that waits holds back the later writes of its key, and
+// so does one in flight (its key is in busy).
+func nextBatch(all []*Op, badRefs, tried, busy map[string]bool, repoFilter, onlyRef string, limit int) []*Op {
+	var batch []*Op
+	if limit <= 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	for k := range busy {
+		seen[k] = true
+	}
+	for i, o := range all {
+		if badRefs[o.Ref] || tried[o.OpID] {
+			continue
+		}
+		if repoFilter != "" && shortOf(o.Ref) != repoFilter {
+			continue
+		}
+		if onlyRef != "" && o.Ref != onlyRef {
+			continue
+		}
+		k := orderKey(o)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if msWaiting(all, i) {
+			continue
+		}
+		batch = append(batch, o)
+	}
+	// longest chains first: the writes that must go one after another start earliest, so they do not end up
+	// alone at the tail of the queue; ties keep queue order
+	chain := map[string]int{}
+	for _, o := range all {
+		chain[orderKey(o)]++
+	}
+	sort.SliceStable(batch, func(i, j int) bool { return chain[orderKey(batch[i])] > chain[orderKey(batch[j])] })
+	if len(batch) > limit {
+		batch = batch[:limit]
+	}
+	return batch
+}
+
+type sent struct {
+	num int
+	err error
+}
+
+// push sends the outbox, one attempt per op per run, up to pushWorkers at a time (order kept per orderKey).
+// Returns (pushed, failed, busy).
 func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 	f, ok := a.tryPushLock()
 	if !ok {
@@ -220,33 +288,36 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 	}
 	defer f.Close()
 	pushed, failed := 0, 0
-	badRefs, tried := map[string]bool{}, map[string]bool{}
+	badRefs, tried, busy := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	type done struct {
+		op *Op
+		sent
+	}
+	results := make(chan done)
+	running := 0
 	for {
-		var op *Op
-		all := a.loadOutbox()
-		for i, o := range all {
-			if badRefs[o.Ref] || tried[o.OpID] || msWaiting(all, i) {
-				continue
-			}
-			if repoFilter != "" && shortOf(o.Ref) != repoFilter {
-				continue
-			}
-			if onlyRef != "" && o.Ref != onlyRef {
-				continue
-			}
-			op = o
+		// keep the pool full: start every write that may go now
+		for _, op := range nextBatch(a.loadOutbox(), badRefs, tried, busy, repoFilter, onlyRef, pushWorkers-running) {
+			tried[op.OpID], busy[orderKey(op)] = true, true
+			running++
+			go func() {
+				if op.Op == "comment" && !op.Inflight {
+					op.Inflight = true
+					a.saveOp(op)
+					op.Inflight = false // first attempt: no marker lookup needed
+				}
+				num, err := a.execute(op)
+				results <- done{op, sent{num, err}}
+			}()
+		}
+		if running == 0 {
 			break
 		}
-		if op == nil {
-			break
-		}
-		tried[op.OpID] = true
-		if op.Op == "comment" && !op.Inflight {
-			op.Inflight = true
-			a.saveOp(op)
-			op.Inflight = false // first attempt: no marker lookup needed
-		}
-		num, err := a.execute(op)
+		// results are applied here, one at a time, so the outbox and localmap have a single writer
+		r := <-results
+		running--
+		delete(busy, orderKey(r.op))
+		op, num, err := r.op, r.num, r.err
 		if err != nil {
 			op.Attempts++
 			msg := trunc(err.Error(), 500)
