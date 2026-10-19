@@ -99,7 +99,7 @@ func (a *App) noMirror(shorts []string) []string {
 		if a.localOnly(s) {
 			continue
 		}
-		if !a.mirror().hasIndex(s) {
+		if !a.mirror().Issues.Has(s, fileIndex) {
 			out = append(out, s)
 		}
 	}
@@ -215,7 +215,7 @@ func (a *App) labelColors(short string) map[string]string {
 		return m
 	}
 	m := map[string]string{}
-	if s, err := a.mirror().readLabelsText(short); err == nil {
+	if s, err := a.mirror().Issues.Read(short, fileLabels); err == nil {
 		for _, line := range splitLines(s) {
 			if p := strings.Split(line, "\t"); len(p) >= 2 && p[1] != "" {
 				m[p[0]] = p[1]

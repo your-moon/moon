@@ -3,7 +3,6 @@ package issues
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -138,7 +137,7 @@ func TestClosingADependencyUnblocksDependents(t *testing.T) {
 	eq(t, "queued reopen after close", firstOf(statusOf(t, e, "app#9")), "blocked")
 	// the mirror catches up (as after sync + pull) and the outbox is empty
 	for _, op := range e.app().loadOutbox() {
-		os.Remove(op.File)
+		e.app().mirror().removeOp(op)
 	}
 	seedIssueBody(e, 3, "CLOSED", "three")
 	reindex(e)

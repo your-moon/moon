@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -49,10 +48,10 @@ func (a *App) findByMarker(short, lid, opTS string) (int, error) {
 		return n, nil
 	}
 	marker := "<!-- local-id: " + lid + " -->"
-	for _, p := range a.mirrorIssueFiles(short) {
-		s, err := readMirrorFile(p)
+	for _, id := range a.mirror().Issues.Idents(short) {
+		s, err := a.mirror().Issues.Get(short, id)
 		if err == nil && strings.Contains(s, marker) {
-			n, _ := strconv.Atoi(strings.TrimSuffix(filepath.Base(p), ".md"))
+			n, _ := strconv.Atoi(id)
 			return n, nil
 		}
 	}
@@ -272,12 +271,12 @@ func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
 		if num != 0 {
 			short, lid, _ := a.parseRef(op.Ref)
 			real := fmt.Sprintf("%s#%d", short, num)
-			a.mirror().appendLocalmap(short, lid, num)
+			a.mirror().LocalIDs.Append(short, lid, num)
 			a.rewriteRefs(op.Ref, real)
-			a.mirror().removeOp(op.File)
+			a.mirror().removeOp(op)
 			a.rewriteRefs(op.Ref, real) // second scan: catches writers that raced the first one
 		} else {
-			a.mirror().removeOp(op.File) // M_remove
+			a.mirror().removeOp(op) // M_remove
 		}
 		pushed++
 	}
@@ -320,7 +319,7 @@ func (a *App) cmdNew(o *Opts) error {
 		a.printf("ref %s#%d  (#%d)\n", repo, n, n)
 		return nil
 	}
-	seq, err := a.nextLocalSeq(repo)
+	seq, err := a.nextLocalID(repo, famIssue)
 	if err != nil {
 		return err
 	}
@@ -688,12 +687,11 @@ func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
 		return "", err
 	}
 	m := a.mirror()
-	m.ensureClaimsDir()
-	path, _ := a.claimPath(ref)
+	path, _ := a.claimKey(ref)
 	mine := &Claim{agent, pid, a.Host, a.nowEpoch(), float64(ttl)}
 	body := mine.marshal()
 	for {
-		if err := m.createClaim(path, body+"\n"); err == nil { // M_excl
+		if err := m.Claims.Create(path, body+"\n"); err == nil { // M_excl
 			return fmt.Sprintf("claimed %s for %s", ref, agent), nil
 		} else if !os.IsExist(err) {
 			return "", err
@@ -703,7 +701,7 @@ func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
 			continue // released between our open and read: retry
 		}
 		if cur.Agent == agent && !a.claimIsStale(cur) {
-			m.writeClaim(path, body+"\n")
+			m.Claims.Put(path, body+"\n")
 			return fmt.Sprintf("renewed claim on %s for %s", ref, agent), nil
 		}
 		if !a.claimIsStale(cur) {
@@ -711,16 +709,16 @@ func (a *App) claim(ref, agent string, ttl, pid int) (string, error) {
 		}
 		// stale: exactly one taker wins the rename, then races everyone else on O_EXCL
 		gone := path + ".stale." + strings.ReplaceAll(uuid4(), "-", "")
-		if err := m.renameClaim(path, gone); err != nil {
+		if err := m.Claims.Rename(path, gone); err != nil {
 			return fmt.Sprintf("TAKEN %s was just taken over by someone else", ref), ErrHeld
 		}
 		moved := a.readClaim(gone)
-		m.remove(gone)
+		m.Claims.Remove(gone)
 		if moved != nil && !a.claimIsStale(moved) { // we renamed a fresh claim that replaced the stale one
-			m.createClaim(path, moved.marshal()+"\n")
+			m.Claims.Create(path, moved.marshal()+"\n")
 			return a.heldMsg(ref, moved), ErrHeld
 		}
-		if err := m.createClaim(path, body+"\n"); err != nil {
+		if err := m.Claims.Create(path, body+"\n"); err != nil {
 			return fmt.Sprintf("TAKEN %s was just taken by someone else", ref), ErrHeld
 		}
 		return fmt.Sprintf("took over stale claim on %s (was %s); now held by %s", ref, a.holderText(cur), agent), nil

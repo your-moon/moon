@@ -176,8 +176,8 @@ func (w *workEnv) outbox() []*Op {
 // mirrorBody is the body of an open mirrored issue, or "" when the file is absent. Most files have no Depends-on
 // line, so the raw text is checked first and the file is parsed only when it might.
 func (w *workEnv) mirrorBody(short string, num int) string {
-	path := w.a.mirror().issueFile(short, num)
-	raw, err := readMirrorFile(path)
+	ident := strconv.Itoa(num)
+	raw, err := w.a.mirror().Issues.Get(short, ident)
 	if err != nil {
 		if !isNotExist(err) {
 			fmt.Fprintf(w.a.Err, "warning: dependencies of %s#%d not read: %v\n", short, num, err)
@@ -187,7 +187,7 @@ func (w *workEnv) mirrorBody(short string, num int) string {
 	if !strings.Contains(strings.ToLower(raw), "depends on") {
 		return ""
 	}
-	n, _, err := loadLocalIssue(path)
+	n, _, err := w.a.loadLocalIssue(short, ident)
 	if err != nil {
 		fmt.Fprintf(w.a.Err, "warning: dependencies of %s#%d not read: %v\n", short, num, err)
 		return ""

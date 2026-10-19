@@ -10,14 +10,14 @@ import (
 
 // TestMirrorStoreOwnsMirrorPaths fails when a file other than mirrorstore.go touches mirror data by hand:
 // os file calls, the atomic/exclusive write helpers, raw readText, or the claims/outbox/localmap paths.
-// The sync engine keeps its autosync marker files; config.go reads the config file; neither may name a
+// config.go reads the config file and is the only file allowed an os call; it may not name a
 // mirror path.
 func TestMirrorStoreOwnsMirrorPaths(t *testing.T) {
 	osCall := regexp.MustCompile(`\bos\.(ReadFile|WriteFile|ReadDir|Remove|RemoveAll|Rename|Stat|Lstat|OpenFile|Open|MkdirAll|Mkdir|Create)\(`)
 	helpers := regexp.MustCompile(`\b(atomicWrite|createExcl|readText|writeIfChanged)\(`)
-	mirrorNames := regexp.MustCompile(`claimsDir|localmap\(|localmap\.tsv|\ba\.outbox\(\)|index\.tsv|prs\.tsv|milestones\.tsv|labels\.tsv|"lastpull"|local-seq|local-mseq`)
+	mirrorNames := regexp.MustCompile(`claimsDir|localmap\(|localmap\.tsv|\ba\.outbox\(\)|index\.tsv|prs\.tsv|milestones\.tsv|labels\.tsv|"lastpull"|local-seq|local-mseq|"\.autosync|"autosync\.log"`)
 	// files that may call os directly, because what they touch is not mirror data
-	osAllowed := map[string]bool{"syncengine.go": true, "config.go": true}
+	osAllowed := map[string]bool{"config.go": true}
 
 	files, _ := filepath.Glob("*.go")
 	for _, f := range files {
@@ -39,7 +39,7 @@ func TestMirrorStoreOwnsMirrorPaths(t *testing.T) {
 			if osCall.MatchString(code) && !osAllowed[f] {
 				at("os file call")
 			}
-			if helpers.MatchString(code) && f != "syncengine.go" {
+			if helpers.MatchString(code) {
 				at("file helper")
 			}
 			if mirrorNames.MatchString(code) {

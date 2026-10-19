@@ -28,7 +28,7 @@ func TestRenderParseRoundTrip(t *testing.T) {
 	want := "---\nnumber: 7\ntitle: \"widget: renders \\\"blank\\\" ünïcode\\ttab\"\nstate: \"open\"\nstate_reason: null\nlabels: [\"bug\", \"area::ui\"]\nmilestone: null\nassignees: []\nauthor: \"ghost\"\ncreated_at: \"2026-01-01T00:00:00Z\"\nupdated_at: \"2026-02-01T00:00:00Z\"\nurl: \"https://github.com/example/app/issues/7\"\n---\n\nline one\nline two\n\n## Comments\n\n### ghost · 2026-01-02T00:00:00Z · id 11\n\nfirst\n"
 	eq(t, "render", text, want)
 	e.write("app/7.md", text)
-	h := readHeader(filepath.Join(e.home, "app/7.md"))
+	h := headerOf(text)
 	eq(t, "title", hStr(h, "title"), "widget: renders \"blank\" ünïcode\ttab")
 	eq(t, "labels", strings.Join(hList(h, "labels"), ","), "bug,area::ui")
 	a := e.app()

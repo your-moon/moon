@@ -247,7 +247,8 @@ type Op struct {
 	// Permanent: GitHub said a retry cannot succeed (issues disabled, repo archived or gone); push skips the
 	// op until `outbox retry` or `outbox edit` clears it.
 	Permanent bool
-	File      string
+	// Key names the op in the outbox (the op stem); the store turns it into a file, callers never see a path.
+	Key string
 }
 
 var argOrder = []string{"title", "body", "labels", "milestone", "local_id", "reason", "comment", "add", "remove"}
@@ -285,7 +286,7 @@ func (o *Op) marshal() string {
 	return dumps(ob, false) + "\n"
 }
 
-func parseOp(data []byte, file string) (*Op, error) {
+func parseOp(data []byte, key string) (*Op, error) {
 	var raw struct {
 		OpID      string         `json:"op_id"`
 		TS        string         `json:"ts"`
@@ -303,19 +304,19 @@ func parseOp(data []byte, file string) (*Op, error) {
 	if raw.Args == nil {
 		raw.Args = map[string]any{}
 	}
-	return &Op{raw.OpID, raw.TS, raw.Op, raw.Ref, raw.Args, int(raw.Attempts), raw.LastError, raw.Inflight, raw.Permanent, file}, nil
+	return &Op{raw.OpID, raw.TS, raw.Op, raw.Ref, raw.Args, int(raw.Attempts), raw.LastError, raw.Inflight, raw.Permanent, key}, nil
 }
 
 // loadOutbox returns all pending ops, oldest first. No lock needed.
 func (a *App) loadOutbox() []*Op {
-	m := a.mirror()
+	box := a.mirror().Outbox
 	var ops []*Op
-	for _, p := range m.opFiles() {
-		b, err := m.readOpBytes(p)
+	for _, key := range box.List() {
+		b, err := box.Get(key)
 		if err != nil {
 			continue
 		}
-		o, err := parseOp(b, p)
+		o, err := parseOp(b, key)
 		if err != nil {
 			continue
 		}
@@ -341,20 +342,12 @@ func argList(m map[string]any, k string) []string {
 }
 
 func (a *App) localmapLookup(short, lid string) int {
-	s, err := a.mirror().readLocalmap()
-	if err != nil {
-		return 0
-	}
-	for _, line := range strings.Split(s, "\n") {
-		p := strings.Split(line, "\t")
-		if len(p) == 3 && p[0] == short && p[1] == lid {
-			if n, err := strconv.Atoi(p[2]); err == nil {
-				return n
-			}
-		}
-	}
-	return 0
+	return a.mirror().LocalIDs.Lookup(short, lid)
 }
+
+// saveOp writes the op to the outbox under its key; removeOp takes it out.
+func (m mirrorStore) saveOp(o *Op) error   { return m.Outbox.Put(o.Key, o.marshal()) }
+func (m mirrorStore) removeOp(o *Op) error { return m.Outbox.Remove(o.Key) }
 
 func (a *App) hasPendingCreate(ref string) bool {
 	for _, o := range a.loadOutbox() {
@@ -365,26 +358,37 @@ func (a *App) hasPendingCreate(ref string) bool {
 	return false
 }
 
-// enqueue writes one new file per op. An op on an L-ref is resolved to the real number if its create already landed.
+// enqueue writes one new file per op, whatever its family. An issue op on an L-ref is resolved to the real
+// number if its create already landed; the refs of the other families (milestones, labels) are not issue refs
+// and are queued as given.
 func (a *App) enqueue(op, ref string, args map[string]any) (string, string, error) {
-	short, ident, err := a.parseRef(ref)
-	if err != nil {
-		return "", "", err
+	issueRef := true
+	if k := kindOrNil(op); k != nil && k.family != famIssue {
+		issueRef = false
 	}
-	if isLocalIdent(ident) && op != "new" && !a.hasPendingCreate(ref) {
-		n := a.localmapLookup(short, ident)
-		if n == 0 {
-			return "", "", die("unknown local issue %s (not in the outbox, not in localmap)", ref)
+	if issueRef {
+		short, ident, err := a.parseRef(ref)
+		if err != nil {
+			return "", "", err
 		}
-		ref = fmt.Sprintf("%s#%d", short, n)
+		if isLocalIdent(ident) && op != "new" && !a.hasPendingCreate(ref) {
+			n := a.localmapLookup(short, ident)
+			if n == 0 {
+				return "", "", die("unknown local issue %s (not in the outbox, not in localmap)", ref)
+			}
+			ref = fmt.Sprintf("%s#%d", short, n)
+		}
 	}
 	t := a.Now()
 	stem := fmt.Sprintf("%s.%06d-%d-%s", t.Format("20060102T150405"), t.UnixMicro()%1000000, os.Getpid(), uuid4())
-	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, File: a.mirror().opFile(stem)}
+	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, Key: stem}
 	if err := a.mirror().saveOp(o); err != nil {
 		return "", "", err
 	}
-	defer a.AfterWrite() // every queued op starts the background push, here and nowhere else
+	defer a.AfterWrite() // every queued op (issue, milestone or label) starts the background push, here and nowhere else
+	if !issueRef {
+		return stem, o.Ref, nil
+	}
 	s2, i2, _ := a.parseRef(o.Ref)
 	if isLocalIdent(i2) && op != "new" && !a.hasPendingCreate(o.Ref) {
 		if n := a.localmapLookup(s2, i2); n != 0 {
@@ -411,17 +415,18 @@ func (c *Claim) marshal() string {
 	return dumps(Obj{{"agent", c.Agent}, {"pid", c.Pid}, {"host", c.Host}, {"ts", c.TS}, {"ttl", int(c.TTL)}}, true)
 }
 
-func (a *App) claimPath(ref string) (string, error) {
+// claimKey is the key of the claim on ref in the claims collection.
+func (a *App) claimKey(ref string) (string, error) {
 	short, ident, err := a.parseRef(ref)
 	if err != nil {
 		return "", err
 	}
-	return a.mirror().claimFile(short, ident), nil
+	return a.mirror().Claims.Key(short, ident), nil
 }
 
 // readClaim returns nil if absent. A claim that is mid-write counts as fresh.
-func (a *App) readClaim(path string) *Claim {
-	b, err := a.mirror().readClaimBytes(path)
+func (a *App) readClaim(key string) *Claim {
+	b, err := a.mirror().Claims.Get(key)
 	if err != nil {
 		if isNotExist(err) {
 			return nil
@@ -453,7 +458,7 @@ func (a *App) claimIsStale(c *Claim) bool {
 }
 
 func (a *App) claimStatus(ref string) (string, *Claim) {
-	p, err := a.claimPath(ref)
+	p, err := a.claimKey(ref)
 	if err != nil {
 		return "none", nil
 	}
@@ -491,7 +496,7 @@ func (a *App) heldMsg(ref string, c *Claim) string {
 }
 
 func (a *App) releaseClaim(ref, agent string, force bool) string {
-	p, err := a.claimPath(ref)
+	p, err := a.claimKey(ref)
 	if err != nil {
 		return "none"
 	}
@@ -502,7 +507,7 @@ func (a *App) releaseClaim(ref, agent string, force bool) string {
 	if !force && agent != c.Agent {
 		return "held by " + c.Agent
 	}
-	a.mirror().remove(p)
+	a.mirror().Claims.Remove(p)
 	return "released"
 }
 

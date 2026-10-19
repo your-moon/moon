@@ -226,13 +226,12 @@ func (a *App) cmdShow(o *Opts) error {
 		a.printf("ref: %s (local, pending sync: not on GitHub yet)\ntitle: %s\nstate: %s\nlabels: %s\nmilestone: %s\n\n%s\n",
 			ref, e.title, e.state, strings.Join(e.labels, ","), orDash(e.milestone), e.body)
 	} else {
-		p := a.mirror().issueFileIdent(short, ident)
 		live := false
 		var text string
 		var h map[string]any
-		text, rerr := readMirrorFile(p)
+		text, rerr := a.mirror().Issues.Get(short, ident)
 		if rerr == nil {
-			h = readHeader(p)
+			h = headerOf(text)
 		} else if isNotExist(rerr) && a.localOnly(short) {
 			return die1("no such issue %s", ref)
 		} else if isNotExist(rerr) {
@@ -344,7 +343,7 @@ func (a *App) cmdStatus(o *Opts) error {
 			stats = append(stats, repoStat{short: short, n: len(a.readIndex(short)), local: true})
 			continue
 		}
-		s, err := a.mirror().readLastpull(short)
+		s, err := a.mirror().Issues.Read(short, fileLastpull)
 		t, perr := strconv.Atoi(pyStrip(s))
 		if err != nil || perr != nil {
 			stats = append(stats, repoStat{short: short})
@@ -476,7 +475,7 @@ func (a *App) cmdPRShow(o *Opts) error {
 	if isLocalIdent(ident) {
 		return die("%s is a local issue ref, not a PR", ref)
 	}
-	s, rerr := a.mirror().readPRText(short, ident)
+	s, rerr := a.mirror().Issues.PR(short, ident)
 	if rerr == nil {
 		a.println(strings.TrimRight(s, "\n"))
 		return nil
@@ -504,12 +503,12 @@ func (a *App) cmdPRShow(o *Opts) error {
 
 func (a *App) cmdClaims(o *Opts) error {
 	m := a.mirror()
-	names := m.claimNames()
+	names := m.Claims.List()
 	var rows [][]string
 	var sts []Status
 	we := a.newWorkEnv()
 	for _, n := range names {
-		c := a.readClaim(m.claimNamePath(n))
+		c := a.readClaim(n)
 		if c == nil {
 			continue
 		}

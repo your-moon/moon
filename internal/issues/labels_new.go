@@ -49,7 +49,7 @@ func (a *App) cmdLabelNew(o *Opts) error {
 	if c := exactLabel(name, a.queuedLabels(short)); c != "" {
 		return die1("%s already has a queued create for the label %q", short, c)
 	}
-	opID, err := a.enqueueMs("label_new", short+"#label:"+name, map[string]any{"name": name, "color": color, "description": o.str("description")})
+	opID, _, err := a.enqueue("label_new", short+"#label:"+name, map[string]any{"name": name, "color": color, "description": o.str("description")})
 	if err != nil {
 		return err
 	}

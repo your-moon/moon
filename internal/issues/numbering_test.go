@@ -66,7 +66,7 @@ func TestConcurrentAllocationGoroutines(t *testing.T) {
 			defer wg.Done()
 			a := e.app()
 			for i := 0; i < per; i++ {
-				n, err := a.nextLocalSeq("app")
+				n, err := a.nextLocalID("app", famIssue)
 				if err != nil {
 					t.Error(err)
 					return

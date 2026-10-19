@@ -134,7 +134,7 @@ func (s *Session) createdAt(short, num string) string {
 		return v
 	}
 	v := ""
-	if head, err := s.app.mirror().readIssueHead(short, num, 2048); err == nil {
+	if head, err := s.app.mirror().Issues.Head(short, num, 2048); err == nil {
 		for _, line := range strings.Split(head, "\n") {
 			if k, val, ok := strings.Cut(line, ": "); ok && k == "created_at" {
 				v = strings.Trim(val, `"`)
@@ -166,16 +166,16 @@ func (s *Session) load(withCreated bool) Snapshot {
 	claims := map[string]*Claim{}
 	{
 		m := a.mirror()
-		for _, name := range m.claimNames() {
+		for _, name := range m.Claims.List() {
 			short, ident, _ := strings.Cut(strings.TrimSuffix(name, ".json"), "-")
-			if c := a.readClaim(m.claimNamePath(name)); c != nil {
+			if c := a.readClaim(name); c != nil {
 				claims[short+"#"+ident] = c
 			}
 		}
 	}
 	for _, short := range snap.Aliases {
 		snap.LabelColors[short] = a.labelColors(short)
-		if a.mirror().hasIndex(short) {
+		if a.mirror().Issues.Has(short, fileIndex) {
 			snap.Missing = false
 		}
 		for _, r := range a.readIndex(short) {
@@ -266,8 +266,7 @@ func (s *Session) Detail(ref string) (Detail, error) {
 		e = &eff{title: argStr(t, "title"), state: "open", labels: argList(t, "labels"), milestone: argStr(t, "milestone"), body: argStr(t, "body")}
 		d.Body = e.body
 	} else {
-		p := a.mirror().issueFileIdent(short, ident)
-		text, rerr := readMirrorFile(p)
+		text, rerr := a.mirror().Issues.Get(short, ident)
 		if rerr != nil {
 			if !isNotExist(rerr) {
 				return d, rerr
@@ -282,7 +281,7 @@ func (s *Session) Detail(ref string) (Detail, error) {
 			}
 			d.NotKept = true
 		} else {
-			h := readHeader(p)
+			h := headerOf(text)
 			if h == nil {
 				h = map[string]any{}
 			}
@@ -357,11 +356,11 @@ type ClaimRow struct {
 func (s *Session) Claims() []ClaimRow {
 	a := s.app
 	m := a.mirror()
-	names := m.claimNames()
+	names := m.Claims.List()
 	we := a.newWorkEnv()
 	var out []ClaimRow
 	for _, n := range names {
-		c := a.readClaim(m.claimNamePath(n))
+		c := a.readClaim(n)
 		if c == nil {
 			continue
 		}

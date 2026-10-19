@@ -134,7 +134,7 @@ func (a *App) cmdOutboxDrop(o *Opts) error {
 	}
 	return a.withQueueLock(func() error {
 		for _, d := range append(deps, op) {
-			if err := a.mirror().removeOp(d.File); err != nil && !isNotExist(err) {
+			if err := a.mirror().removeOp(d); err != nil && !isNotExist(err) {
 				return err
 			}
 			a.printf("dropped %s  %s %s\n", d.OpID, d.Op, d.Ref)
