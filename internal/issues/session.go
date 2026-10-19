@@ -313,39 +313,6 @@ func stripFrontMatter(s string) string {
 	return s
 }
 
-// Claim takes a claim like `moon issues claim` with a 120m lease. A claim held by another agent returns ErrHeld, never forced.
-func (s *Session) Claim(ref, agent string) (string, error) {
-	msg, err := s.app.claim(ref, agent, 120*60, 0)
-	return strings.TrimSpace(msg), err
-}
-
-// Release drops the agent's own claim; someone else's claim returns ErrHeld. Never forced.
-func (s *Session) Release(ref, agent string) (string, error) {
-	msg, err := s.app.release(ref, agent, false)
-	return strings.TrimSpace(msg), err
-}
-
-// Close queues a close (releasing the agent's own claim, as the CLI does with --agent).
-func (s *Session) Close(ref, agent string) error {
-	_, err := s.app.closeIssue(ref, "completed", "", agent, false)
-	s.app.AfterWrite()
-	return err
-}
-
-// Reopen queues a reopen.
-func (s *Session) Reopen(ref string) error {
-	_, err := s.app.reopen(ref)
-	s.app.AfterWrite()
-	return err
-}
-
-// Comment queues a comment.
-func (s *Session) Comment(ref, body string) error {
-	_, err := s.app.comment(ref, body)
-	s.app.AfterWrite()
-	return err
-}
-
 // SortedLabels and SortedMilestones are the distinct values in items, for the pickers.
 func SortedLabels(items []Item) []string {
 	seen := map[string]bool{}
@@ -424,20 +391,6 @@ func (s *Session) Milestones() []MilestoneRow {
 			Description: m.desc, Number: m.number, LocalID: m.localID})
 	}
 	return out
-}
-
-// SetMilestone queues a milestone change like `moon issues milestone <ref> <title>`; title "none" clears it.
-func (s *Session) SetMilestone(ref, title string) error {
-	_, err := s.app.setMilestone(ref, title)
-	s.app.AfterWrite()
-	return err
-}
-
-// Label queues label changes like `moon issues label <ref> --add A --remove B`.
-func (s *Session) Label(ref string, add, remove []string) error {
-	_, err := s.app.labels(ref, add, remove)
-	s.app.AfterWrite()
-	return err
 }
 
 // PRItem is one pull request of the mirror, for completion.

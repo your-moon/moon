@@ -24,14 +24,9 @@ import (
 type Store interface {
 	Load() issues.Snapshot
 	Detail(ref string) (issues.Detail, error)
-	Claim(ref, agent string) (string, error)
-	Release(ref, agent string) (string, error)
-	Close(ref, agent string) error
-	Reopen(ref string) error
-	Comment(ref, body string) error
 	Milestones() []issues.MilestoneRow
-	SetMilestone(ref, title string) error
-	Label(ref string, add, remove []string) error
+	// Do runs an issue action (internal/issues/actions.go) as agent and returns the footer message.
+	Do(action, ref, agent string, args []string) (string, error)
 }
 
 // Options configure a model.
@@ -659,15 +654,9 @@ func (m Model) keyPick(k tea.KeyMsg) Model {
 		if title == "" {
 			arg = "none"
 		}
-		if err := m.st.SetMilestone(it.Ref, arg); err != nil {
-			m.msg = "not queued: " + err.Error()
-			return m
+		if m.act("milestone", it.Ref, arg) && title == "" {
+			m.msg = "queued milestone (none) on " + it.Ref
 		}
-		if title == "" {
-			title = "(none)"
-		}
-		m.msg = "queued milestone " + title + " on " + it.Ref
-		m.reload()
 		return m
 	default:
 		m.comp = compState{}
@@ -963,46 +952,61 @@ func (m Model) mouse(e tea.MouseMsg) Model {
 
 func (m *Model) claim() {
 	if it := m.cur(); it != nil {
-		m.claimItem(it)
+		m.act("claim", it.Ref)
 	}
-}
-
-func (m *Model) claimItem(it *issues.Item) {
-	if c := it.Claim; c != nil && !c.Stale && c.Agent != m.opt.Agent {
-		m.msg = "not claimed: " + it.Ref + " is held by " + c.Agent + " (" + age(c.AgeSec) + ")"
-		return
-	}
-	out, err := m.st.Claim(it.Ref, m.opt.Agent)
-	if err != nil {
-		m.msg = "not claimed: " + firstLine(out, err)
-	} else {
-		m.msg = firstLine(out, nil)
-	}
-	m.reload()
 }
 
 func (m *Model) release() {
 	if it := m.cur(); it != nil {
-		m.releaseItem(it)
+		m.act("release", it.Ref)
 	}
 }
 
-func (m *Model) releaseItem(it *issues.Item) {
-	if it.Claim == nil {
-		m.msg = it.Ref + " has no claim"
-		return
+// act runs one issue action on ref as this model's agent: the action's own Allows decides (the same rule
+// completion offers by), a refusal or failure becomes the footer message, and the list reloads.
+func (m *Model) act(name, ref string, args ...string) bool {
+	it := m.itemByRef(ref)
+	if it == nil {
+		m.msg = "unknown ref " + ref
+		return false
 	}
-	if it.Claim.Agent != m.opt.Agent {
-		m.msg = "not released: " + it.Ref + " is held by " + it.Claim.Agent + " (never forced)"
-		return
+	a, _ := issues.ActionNamed(name)
+	agent := m.opt.Agent
+	if !a.Allows(*it, agent) || (name == "release" && it.Claim.Agent != agent) {
+		m.msg = refusal(name, it)
+		return false
 	}
-	out, err := m.st.Release(it.Ref, m.opt.Agent)
-	if err != nil {
-		m.msg = "not released: " + firstLine(out, err)
-	} else {
-		m.msg = firstLine(out, nil)
-	}
+	out, err := m.st.Do(name, ref, agent, args)
 	m.reload()
+	if err != nil {
+		prefix := map[string]string{"claim": "not claimed: ", "release": "not released: "}[name]
+		if prefix == "" {
+			prefix = "not queued: "
+		}
+		m.msg = prefix + firstLine(out, err)
+		return false
+	}
+	m.msg = firstLine(out, nil)
+	return true
+}
+
+// refusal words why action name does not apply to it.
+func refusal(name string, it *issues.Item) string {
+	switch c := it.Claim; {
+	case name == "claim" && c != nil && !c.Stale:
+		return "not claimed: " + it.Ref + " is held by " + c.Agent + " (" + age(c.AgeSec) + ")"
+	case name == "claim":
+		return "not claimed: " + it.Ref + " is closed"
+	case name == "release" && c == nil:
+		return it.Ref + " has no claim"
+	case name == "release":
+		return "not released: " + it.Ref + " is held by " + c.Agent + " (never forced)"
+	case name == "close":
+		return it.Ref + " is already closed"
+	case name == "reopen":
+		return it.Ref + " is not closed"
+	}
+	return "not queued: " + name + " does not apply to " + it.Ref
 }
 
 func (m *Model) toggleClosed() {
@@ -1010,20 +1014,11 @@ func (m *Model) toggleClosed() {
 	if it == nil {
 		return
 	}
-	var err error
-	verb := "close"
 	if it.State == "open" {
-		err = m.st.Close(it.Ref, m.opt.Agent)
+		m.act("close", it.Ref)
 	} else {
-		verb = "reopen"
-		err = m.st.Reopen(it.Ref)
+		m.act("reopen", it.Ref)
 	}
-	if err != nil {
-		m.msg = "not queued: " + err.Error()
-		return
-	}
-	m.msg = "queued " + verb + " " + it.Ref
-	m.reload()
 }
 
 func (m Model) startComment() (tea.Model, tea.Cmd) {
@@ -1069,12 +1064,7 @@ func (m *Model) queueComment(ref, body string) {
 		m.msg = "comment canceled: empty"
 		return
 	}
-	if err := m.st.Comment(ref, body); err != nil {
-		m.msg = "not queued: " + err.Error()
-		return
-	}
-	m.msg = "queued comment on " + ref
-	m.reload()
+	m.act("comment", ref, body)
 }
 
 func (m Model) keyPrompt(k tea.KeyMsg) Model {

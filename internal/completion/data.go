@@ -28,18 +28,11 @@ func inAliases(alias string, only []string) bool {
 // `ls -L` accepts it as well as the stored name.
 func ShortLabel(l string) string { return issues.LabelShort(l) }
 
-// RefFilter says which issues a command offers: claim only unclaimed open ones, release only claimed ones,
-// close only open ones, reopen only closed ones, everything else all of them.
-func RefFilter(cmd string) func(issues.Item) bool {
-	switch cmd {
-	case "claim":
-		return func(it issues.Item) bool { return it.State == "open" && (it.Claim == nil || it.Claim.Stale) }
-	case "release":
-		return func(it issues.Item) bool { return it.Claim != nil }
-	case "close":
-		return func(it issues.Item) bool { return it.State == "open" }
-	case "reopen":
-		return func(it issues.Item) bool { return it.State == "closed" }
+// RefFilter says which issues a command offers to agent: for an item action, the ones its Allows says yes to
+// (internal/issues/actions.go); everything else offers all of them.
+func RefFilter(cmd, agent string) func(issues.Item) bool {
+	if a, ok := issues.ActionNamed(cmd); ok {
+		return func(it issues.Item) bool { return a.Allows(it, agent) }
 	}
 	return func(issues.Item) bool { return true }
 }
@@ -59,7 +52,7 @@ func Refs(s Source, cmd, typed string, aliases []string) []Candidate {
 			}
 		}
 	} else {
-		keep := RefFilter(cmd)
+		keep := RefFilter(cmd, agentOf(s))
 		for _, it := range s.Items() {
 			if inAliases(it.Alias, aliases) && strings.HasPrefix(it.Ref, typed) && keep(it) {
 				rows = append(rows, row{it.Ref, it.Title, it.Updated, it.Num})

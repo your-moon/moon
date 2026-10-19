@@ -272,18 +272,24 @@ func dedupe(c []Candidate) []Candidate {
 }
 
 // LineCommands are the commands of the dashboard's ":" line.
-var LineCommands = []Candidate{
-	{"claim", "claim an unclaimed open issue"}, {"release", "drop your claim"}, {"close", "queue closing an open issue"},
-	{"reopen", "queue reopening a closed issue"}, {"comment", "queue a comment: :comment <ref> text"},
-	{"label", "queue label changes: :label <ref> add|remove <label>"}, {"milestone", "queue a milestone: :milestone <ref> <title|none>"},
-	{"sort", "number, updated, created, title; add reverse"}, {"filter", "state:open label:bug milestone:v1 repo:erp, or clear"},
-	{"repo", "show one repo alias (all clears)"}, {"q", "quit"},
+// The item actions come from internal/issues/actions.go; the rest are the view's own.
+var LineCommands = lineCommands()
+
+func lineCommands() []Candidate {
+	var c []Candidate
+	for _, a := range issues.Actions() {
+		c = append(c, Candidate{a.Name, a.Help})
+	}
+	return append(c, []Candidate{
+		{"sort", "number, updated, created, title; add reverse"}, {"filter", "state:open label:bug milestone:v1 repo:erp, or clear"},
+		{"repo", "show one repo alias (all clears)"}, {"q", "quit"},
+	}...)
 }
 
 var sortValues = []Candidate{{"number", ""}, {"updated", ""}, {"created", ""}, {"title", ""}, {"reverse", "reverse the order"}}
 
 // CompleteLine completes the ":" command line. Arguments are completed by the same engine as the shell
-// (Complete), so claim offers only unclaimed open issues, release only claimed ones, reopen only closed ones.
+// (Complete), so claim offers open issues not held live by someone else, release only claimed ones, reopen only closed ones.
 func CompleteLine(s Source, text string, cursor int) (start, end int, cands []Candidate) {
 	w, typed := wordAt(text, cursor)
 	start, end = w.Start, w.End
@@ -303,14 +309,15 @@ func CompleteLine(s Source, text string, cursor int) (start, end int, cands []Ca
 	for _, d := range done[1:] {
 		args = append(args, d.Text)
 	}
-	switch cmd {
-	case "claim", "release", "close", "reopen", "comment", "milestone", "show":
+	if _, isAction := issues.ActionNamed(cmd); (isAction && cmd != "label") || cmd == "show" { // the ref comes first
 		if strings.HasPrefix(typed, "-") {
 			return
 		}
 		all := append(append([]string{"issues", cmd}, args...), typed)
 		r := Complete(Options{Open: func(string, string) Source { return s }}, all)
 		return start, end, quoteAll(r.Cands)
+	}
+	switch cmd {
 	case "label":
 		switch len(args) {
 		case 0:

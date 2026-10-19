@@ -282,7 +282,7 @@ func (m Model) listPane(w, h int) []string {
 	for i := m.top; i < len(m.rows) && i < m.top+vis; i++ {
 		it := &m.rows[i].it
 		mark := " "
-		if it.Claim != nil && !it.Claim.Stale {
+		if issues.ClaimedLive(*it) {
 			mark = "@"
 		} else if it.Pending > 0 || it.Num == 0 {
 			mark = "+"

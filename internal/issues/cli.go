@@ -547,9 +547,6 @@ func Main(args []string, e Env) int {
 		}
 	}
 	a.printScopeHeader(sp, o)
-	if !sp.read && !noAutopush[name] {
-		defer a.AfterWrite() // after the write is queued, even when the command then fails
-	}
 	if err := sp.run(a, o); err != nil {
 		if ee, ok := err.(*exitError); ok {
 			if ee.Msg != "" {

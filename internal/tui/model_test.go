@@ -115,7 +115,7 @@ func TestClaimHeldByAnotherAgentIsRefused(t *testing.T) {
 		t.Fatal("release must not force")
 	}
 	// the store refuses on its own as well
-	if _, err := mi.sess.Claim("app#7", "me"); err != issues.ErrHeld {
+	if _, err := mi.sess.Do("claim", "app#7", "me", nil); err != issues.ErrHeld {
 		t.Fatalf("store claim err = %v", err)
 	}
 	// my own claim on another issue works, shows in the list, and releases
@@ -348,14 +348,8 @@ func (b bigStore) Load() issues.Snapshot { return b.snap }
 func (b bigStore) Detail(ref string) (issues.Detail, error) {
 	return issues.Detail{Ref: ref, Title: "t", State: "open", Body: strings.Repeat("body line\n", 40)}, nil
 }
-func (bigStore) Claim(string, string) (string, error)   { return "", nil }
-func (bigStore) Release(string, string) (string, error) { return "", nil }
-func (bigStore) Close(string, string) error             { return nil }
-func (bigStore) Reopen(string) error                    { return nil }
-func (bigStore) Comment(string, string) error           { return nil }
-func (bigStore) Milestones() []issues.MilestoneRow      { return nil }
-func (bigStore) SetMilestone(string, string) error      { return nil }
-func (bigStore) Label(string, []string, []string) error { return nil }
+func (bigStore) Milestones() []issues.MilestoneRow                   { return nil }
+func (bigStore) Do(string, string, string, []string) (string, error) { return "", nil }
 
 func TestThousandIssuesStayInstant(t *testing.T) {
 	var snap issues.Snapshot

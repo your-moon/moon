@@ -384,6 +384,7 @@ func (a *App) enqueue(op, ref string, args map[string]any) (string, string, erro
 	if err := a.mirror().saveOp(o); err != nil {
 		return "", "", err
 	}
+	defer a.AfterWrite() // every queued op starts the background push, here and nowhere else
 	s2, i2, _ := a.parseRef(o.Ref)
 	if isLocalIdent(i2) && op != "new" && !a.hasPendingCreate(o.Ref) {
 		if n := a.localmapLookup(s2, i2); n != 0 {
