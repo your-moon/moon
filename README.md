@@ -39,6 +39,7 @@ tab-separated text as always, so scripts and agents are unaffected. `--format ta
     moon issues ls 10                            # same limit, shortest form
     moon issues frontier -L kind:bug             # open issues nobody has claimed
     moon issues show app#12                      # one issue, body wrapped to the terminal
+    moon issues show app#12 --format json        # one issue as JSON: ls fields plus body, assignees, author, url, claim
     moon issues milestones                       # progress of the open milestones
     moon issues milestones show v1.0             # one milestone and its issues
     moon issues prs -S all                       # pull requests
@@ -67,6 +68,41 @@ and of `moon issues milestones` (the footer goes to stderr, so pipes stay clean;
 Sorting: `--sort number|updated|created|title` (`-s`) and `-r` on `ls`, `frontier` and `prs` (milestones take
 `due|progress|title|open`). Percentages round down, so 99.6% reads 99 and only a finished milestone shows 100.
 `--milestone` accepts a case-insensitive title or a unique prefix. A typo gets "did you mean ...".
+
+An empty body is refused where it would do harm: `edit --body-file F` (or `--body ""`) with a blank body, `new --body-file F` with
+a blank file, and `comment` with a blank body exit 2 and queue nothing, because an empty input almost always means the script
+that wrote it failed (an empty `edit` erases the issue body on GitHub). `--allow-empty-body` on `new` and `edit` says it is meant.
+
+`new -L` and `label --add` check each label against the repo's mirrored `labels.tsv` and refuse one GitHub does not have (exit 2,
+nothing queued, close matches listed), so a typo does not leave a write stuck in the outbox. A label that differs only in case is
+queued in GitHub's spelling. moon never creates labels: add it on GitHub and `moon issues pull`. Nothing is checked for a repo that
+was never pulled, a local-only repo, or when `labels.tsv` holds 100 labels (`pull` fetches no more, so it may be cut off).
+`--remove` is not checked.
+
+Dependencies: `new|edit --depends-on REF` (repeatable; `#3`, `3` or `app#3`, same repo only; `edit ... --depends-on none` clears)
+writes one `Depends on #3, #5` line into the body, so it reads the same on GitHub and survives a pull. `edit` rewrites the
+body around that line, so an edit queued from a stale mirror overwrites newer text on GitHub, as `--body` does. `ls` and `show`
+`--format json` print `depends_on` (every number on the line). An open issue with an open dependency has status `blocked` (shown as
+`blocked: by #3`); a claim still wins (`working`), and the `blocked` labels keep working. A dependency counts as open from the mirror
+after queued `close` and `reopen`, so closing it unblocks its dependents at once. A number the mirror does not list is ignored.
+Only a line made of nothing but refs counts: `Depends on the auth service (#4)` is prose. Cycles are not detected.
+
+## Fixing a write that sync cannot send
+
+A queued write that fails stays in the outbox and is retried by every `sync`. `moon issues outbox` is how to look at it and repair it:
+
+    moon issues outbox                              # = outbox ls: id, op, ref, tries, what it does, last error (-j adds the args)
+    moon issues outbox edit 3f9a21c0 --label bug --label area::web   # a queued new: replace its labels
+    moon issues outbox edit 3f9a21c0 --title T --body-file fixed.md  # title and body (a new keeps its local-id marker)
+    moon issues outbox edit 5be7d210 --add bug --remove stale        # a queued label write
+    moon issues outbox drop 3f9a21c0                # remove a queued write
+    moon issues outbox drop 3f9a21c0 --cascade      # a queued new that other writes act on: drop those too
+
+`<op>` is the op id from `outbox ls` or any piece of it that only one op has (at least 4 characters; the table shows the last 8).
+`edit` changes `new` (title, body, `--label` replaces the list, `--milestone`), `edit` (title, body), `comment` (body), `label`
+(`--add`, `--remove`) and `milestone` writes; the fields are checked like the original command (unknown labels and blank bodies are
+refused), and the old error is cleared so the next `sync` shows whether the fix worked. Both `edit` and `drop` refuse while a push is
+running. Dropping a queued `new` that other writes act on needs `--cascade`, because they could never be sent without it.
 
 ## Projects and scope
 
@@ -206,7 +242,7 @@ offered and nothing is printed. The scripts only call `moon __complete <words...
 
 ## Commands
 
-`ls show milestones (new edit close reopen show) prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit push pull sync prune where`,
+`ls show milestones (new edit close reopen show) prs pr show frontier claim release claims sweep status new comment close reopen label milestone edit outbox (ls edit drop) push pull sync prune where`,
 `tui` (also `moon tui`, see Terminal UI), plus `moon version`. Run `moon issues help` for the flags. Run `moon tui` for the interactive dashboard. Environment: `ISSUES_NO_AUTOSYNC=1` turns off the background refresh of a
 mirror older than 10 minutes, `ISSUES_KEEP_DAYS` (default 30) is how long closed items keep their file, `ISSUES_GH` points at another `gh` binary.
 

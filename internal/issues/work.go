@@ -46,6 +46,7 @@ type Status struct {
 	AgeSec     int    // working, stale: how long ago the claim was taken
 	PR         int    // in review: the open pull request
 	StaleClaim bool   // done with a claim still on file: the claim should be released
+	By         []int  // blocked: the open issues it depends on
 }
 
 // Label is the text shown in tables and TSV: "working: sonnet-17 11m", "in review: PR #588", "done (stale claim)".
@@ -58,6 +59,10 @@ func (s Status) Label() string {
 	case StReview:
 		if s.PR > 0 {
 			return s.Name + ": PR #" + strconv.Itoa(s.PR)
+		}
+	case StBlocked:
+		if len(s.By) > 0 {
+			return "blocked: by " + hashList(s.By)
 		}
 	case StDone:
 		if s.StaleClaim {
@@ -92,6 +97,8 @@ type WorkIssue struct {
 	Num    int    // 0 for a local issue that is not on GitHub yet
 	State  string // open or closed
 	Labels []string
+	// OpenDeps are the open issues this one depends on (see deps.go); any of them makes it blocked.
+	OpenDeps []int
 }
 
 // WorkPR is an open pull request as far as status is concerned.
@@ -125,6 +132,14 @@ type workInput struct {
 	ctx     WorkCtx
 }
 
+func hashList(nums []int) string {
+	parts := make([]string, len(nums))
+	for i, n := range nums {
+		parts[i] = "#" + strconv.Itoa(n)
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (w *workInput) age() int { return int(float64(w.ctx.Now.UnixNano())/1e9 - w.claim.TS) }
 
 // Rule is one row of the priority table: the first rule whose When is true decides the status.
@@ -144,8 +159,8 @@ var WorkRules = []Rule{
 		func(w *workInput) Status { return Status{Name: StWorking, Agent: w.claim.Agent, AgeSec: w.age()} }},
 	{StStale, func(w *workInput) bool { return w.claim != nil && w.expired },
 		func(w *workInput) Status { return Status{Name: StStale, Agent: w.claim.Agent, AgeSec: w.age()} }},
-	{StBlocked, func(w *workInput) bool { return hasBlockLabel(w.is.Labels) },
-		func(w *workInput) Status { return Status{Name: StBlocked} }},
+	{StBlocked, func(w *workInput) bool { return len(w.is.OpenDeps) > 0 || hasBlockLabel(w.is.Labels) },
+		func(w *workInput) Status { return Status{Name: StBlocked, By: w.is.OpenDeps} }},
 	{StReady, func(w *workInput) bool { return hasReadyLabel(w.is.Labels) },
 		func(w *workInput) Status { return Status{Name: StReady} }},
 	{StOpen, func(w *workInput) bool { return true },
@@ -245,10 +260,15 @@ type workEnv struct {
 	claims map[string]*Claim // by ref, e.g. app#12
 	prs    map[string][]WorkPR
 	ctx    WorkCtx
+
+	deps       map[string][]int        // by ref: every number its body depends on, open or not
+	depOpen    map[string]map[int]bool // by repo: is issue N open (deps.go)
+	ops        []*Op
+	outboxRead bool
 }
 
 func (a *App) newWorkEnv() *workEnv {
-	w := &workEnv{a: a, claims: map[string]*Claim{}, prs: map[string][]WorkPR{},
+	w := &workEnv{a: a, claims: map[string]*Claim{}, deps: map[string][]int{}, prs: map[string][]WorkPR{},
 		ctx: a.workCtx()}
 	ents, _ := os.ReadDir(a.claimsDir())
 	for _, e := range ents {
@@ -293,11 +313,28 @@ func (w *workEnv) issue(short string, num int, state string, labels []string) Wo
 
 // status is the work status of one issue ref with the given effective state and labels.
 func (w *workEnv) status(ref, short string, num int, state string, labels []string) Status {
+	body := ""
+	if num > 0 && state != "closed" {
+		body = w.mirrorBody(short, num)
+	}
+	return w.statusBody(ref, short, num, state, labels, body)
+}
+
+// statusBody is status for a caller that already has the effective body (queued edits applied, or a queued
+// `new`), which is where the Depends-on line is read from.
+func (w *workEnv) statusBody(ref, short string, num int, state string, labels []string, body string) Status {
 	var prs []WorkPR
 	if num > 0 && state != "closed" {
 		prs = w.openPRs(short)
 	}
-	return WorkStatus(w.issue(short, num, state, labels), w.claims[ref], prs, w.ctx)
+	is := w.issue(short, num, state, labels)
+	if all := dependsOn(body); len(all) > 0 {
+		w.deps[ref] = all
+	}
+	if state != "closed" {
+		is.OpenDeps = w.openDeps(short, body)
+	}
+	return WorkStatus(is, w.claims[ref], prs, w.ctx)
 }
 
 // statusSet parses --status, -w and -i into the set of status names to keep; nil means no filter.

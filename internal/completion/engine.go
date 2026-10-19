@@ -175,6 +175,15 @@ func completeIssues(src *lazy, prev []string, cur string) Result {
 			return walkCmd(src, find("pr show"), rest[1:], cur)
 		}
 		return Result{Dir: DirNoFiles}
+	case "outbox":
+		if len(rest) == 0 {
+			var subs []Candidate
+			for _, n := range []string{"ls", "edit", "drop"} {
+				subs = append(subs, Candidate{n, helpSummary("outbox " + n)})
+			}
+			return Result{filterPrefix(subs, cur, false), DirNoFiles}
+		}
+		return walkCmd(src, find("outbox "+rest[0]), rest[1:], cur)
 	case "milestones":
 		if len(rest) > 0 {
 			if ci := find("milestones " + rest[0]); ci != nil {

@@ -31,6 +31,7 @@ type row struct {
 	updated                         string
 	local                           bool
 	work                            Status
+	deps                            []int // numbers the body depends on
 }
 
 func (a *App) collect(o *Opts, state, q string) []row {
@@ -59,7 +60,7 @@ func (a *App) collect(o *Opts, state, q string) []row {
 			if keep != nil && !keep[ws.Name] {
 				continue
 			}
-			out = append(out, row{ref: short + "#" + num, work: ws, line: short + "#" + num + "\t" + st + "\t" + orDash(rms) + "\t" + orDash(labels) + "\t" + title,
+			out = append(out, row{ref: short + "#" + num, work: ws, deps: we.deps[short+"#"+num], line: short + "#" + num + "\t" + st + "\t" + orDash(rms) + "\t" + orDash(labels) + "\t" + title,
 				num: n, state: st, milestone: rms, labels: labels, title: title, updated: r[4]})
 		}
 		var pend []*Op
@@ -88,11 +89,11 @@ func (a *App) collect(o *Opts, state, q string) []row {
 			if q != "" && !strings.Contains(strings.ToLower(title), q) {
 				continue
 			}
-			ws := we.status(op.Ref, short, 0, "open", labels)
+			ws := we.statusBody(op.Ref, short, 0, "open", labels, argStr(t, "body"))
 			if keep != nil && !keep[ws.Name] {
 				continue
 			}
-			out = append(out, row{ref: op.Ref, work: ws, line: op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)\tlocal",
+			out = append(out, row{ref: op.Ref, work: ws, deps: we.deps[op.Ref], line: op.Ref + "\topen\t" + orDash(tm) + "\t" + orDash(strings.Join(labels, ",")) + "\t" + title + " (pending sync)\tlocal",
 				num: math.MaxInt32, state: "open", milestone: tm, labels: strings.Join(labels, ","), title: title + " (pending sync)",
 				updated: a.Now().UTC().Format("2006-01-02T15:04:05Z"), local: true})
 		}
@@ -232,7 +233,7 @@ func (a *App) cmdShow(o *Opts) error {
 	}
 	v := a.resolveView(o, false)
 	if v.format == "json" {
-		return die("show has no json format; read the file under %s/%s/ or use `moon issues prs --json` for pull requests", a.Home, short)
+		return a.showJSON(ref, short, ident)
 	}
 	pretty := v.format == "table"
 	ops := a.loadOutbox()

@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -215,15 +214,11 @@ func (a *App) rewriteRefs(old, new string) {
 
 // push applies the outbox files in order, one attempt per op per run. Returns (pushed, failed, busy).
 func (a *App) push(repoFilter, onlyRef string) (int, int, bool) {
-	os.MkdirAll(a.Home, 0o755)
-	f, err := os.OpenFile(filepath.Join(a.Home, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
+	f, ok := a.tryPushLock()
+	if !ok {
 		return 0, 0, true
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil { // M_pushlock
-		return 0, 0, true
-	}
 	pushed, failed := 0, 0
 	badRefs, tried := map[string]bool{}, map[string]bool{}
 	for {
@@ -286,7 +281,7 @@ func (a *App) cmdNew(o *Opts) error {
 	if err := a.expandMsRef(o); err != nil {
 		return err
 	}
-	body, _, err := a.readBody(o)
+	body, _, err := a.readBodyGuarded(o, "new", true)
 	if err != nil {
 		return err
 	}
@@ -297,6 +292,16 @@ func (a *App) cmdNew(o *Opts) error {
 	labels := o.L["label"]
 	if labels == nil {
 		labels = []string{}
+	}
+	if labels, err = a.checkLabels(repo, labels); err != nil {
+		return err
+	}
+	if o.Seen["depends-on"] {
+		nums, err := a.depNumbers(repo, o.L["depends-on"], 0)
+		if err != nil {
+			return err
+		}
+		body = withDepends(body, nums)
 	}
 	if a.localOnly(repo) {
 		n, err := a.newLocalOnly(repo, o.str("title"), body, labels, o.str("milestone"))
@@ -354,6 +359,22 @@ func toAny(l []string) []any {
 	return out
 }
 
+// labelArgs is the op args of `label`: the labels to add (checked against the repo's labels) and to remove.
+func (a *App) labelArgs(o *Opts) (map[string]any, error) {
+	add, rm := o.L["add"], o.L["remove"]
+	if len(add)+len(rm) == 0 {
+		return nil, die("label needs --add and/or --remove")
+	}
+	short, _, err := a.parseRef(o.Pos[0])
+	if err != nil {
+		return nil, err
+	}
+	if add, err = a.checkLabels(short, add); err != nil {
+		return nil, err
+	}
+	return map[string]any{"add": toAny(add), "remove": toAny(rm)}, nil
+}
+
 func (a *App) cmdSimple(kind string) func(o *Opts) error {
 	return func(o *Opts) error {
 		args := map[string]any{}
@@ -363,7 +384,7 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			if err != nil {
 				return err
 			}
-			if b == "" {
+			if pyStrip(b) == "" {
 				return die("comment needs --body or --body-file")
 			}
 			args["body"] = b
@@ -373,17 +394,11 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 				args["comment"] = c
 			}
 		case "label":
-			add, rm := o.L["add"], o.L["remove"]
-			if len(add)+len(rm) == 0 {
-				return die("label needs --add and/or --remove")
+			la, err := a.labelArgs(o)
+			if err != nil {
+				return err
 			}
-			args["add"], args["remove"] = toAny(add), toAny(rm)
-			if add == nil {
-				args["add"] = []any{}
-			}
-			if rm == nil {
-				args["remove"] = []any{}
-			}
+			args = la
 		case "milestone":
 			t, err := a.msIssueTitle(o.Pos[0], o.Pos[1])
 			if err != nil {
@@ -394,15 +409,20 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			if o.Seen["title"] {
 				args["title"] = o.str("title")
 			}
-			b, has, err := a.readBody(o)
+			b, has, err := a.readBodyGuarded(o, "edit", false)
 			if err != nil {
 				return err
+			}
+			if o.Seen["depends-on"] {
+				if b, has, err = a.editDepends(o.Pos[0], b, has, o.L["depends-on"]); err != nil {
+					return err
+				}
 			}
 			if has {
 				args["body"] = b
 			}
 			if len(args) == 0 {
-				return die("edit needs --title and/or --body")
+				return die("edit needs --title, --body and/or --depends-on")
 			}
 		}
 		var opID, ref string
