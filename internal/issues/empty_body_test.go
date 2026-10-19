@@ -94,7 +94,7 @@ func TestLocalOnlyEditKeepsBodyOnEmptyFile(t *testing.T) {
 	os.WriteFile(e.cfg, []byte("mirror_dir = \"mirror\"\n[repos.notes]\nlocal = true\n"), 0o644)
 	e.run("new", "--repo", "notes", "--title", "t", "--body", "keep me")
 	_, _, code := e.run("edit", "notes#1", "--body-file", emptyFile(t, ""))
-	if code != 2 || !strings.Contains(e.read("notes/1.md"), "keep me") {
-		t.Fatalf("code=%d file=%s", code, e.read("notes/1.md"))
+	if code != 2 || !strings.Contains(e.getIssue("notes", "1"), "keep me") {
+		t.Fatalf("code=%d file=%s", code, e.getIssue("notes", "1"))
 	}
 }

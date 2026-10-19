@@ -12,12 +12,15 @@ func TestPermanentErrorIsNotRetried(t *testing.T) {
 	e.run("close", "app#1")
 	e.run("close", "app#2")
 	e.run("close", "lib#3")
+	g := e.useMem()
+	g.seed("example/app", 2, "2026-01-01T00:00:00Z")
+	g.seed("example/lib", 3, "2026-01-01T00:00:00Z")
 	disabled := true
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		if args[0] == "issue" && args[4] == "example/app" && disabled {
-			return "", &GhError{Msg: "the 'example/app' repository has disabled issues"}
+	g.hook = func(call, repo, ident string) error {
+		if call == "CloseIssue" && repo == "example/app" && disabled {
+			return &GhError{Msg: "the 'example/app' repository has disabled issues"}
 		}
-		return "", nil
+		return nil
 	}
 	out, _, _ := e.run("push")
 	eq(t, "first push", out, "PUSH pushed=1 failed=2\n")
@@ -31,10 +34,10 @@ func TestPermanentErrorIsNotRetried(t *testing.T) {
 		}
 	}
 	// the second push neither tries them nor counts them
-	before := e.gh.callCount()
+	before := g.callCount()
 	out, _, _ = e.run("push")
 	eq(t, "second push", out, "PUSH pushed=0 failed=0\n")
-	if e.gh.callCount() != before {
+	if g.callCount() != before {
 		t.Fatal("a permanent op was sent again")
 	}
 	if o, _, _ := e.run("outbox", "ls"); !strings.Contains(o, "permanent, no retry: the 'example/app' repository has disabled issues") {
@@ -55,7 +58,9 @@ func TestPermanentErrorIsNotRetried(t *testing.T) {
 func TestTemporaryErrorIsRetried(t *testing.T) {
 	e := newEnv(t)
 	e.run("close", "app#1")
-	e.gh.handler = func(args []string, stdin string) (string, error) { return "", &GhError{Msg: "HTTP 502"} }
+	g := e.useMem()
+	g.seed("example/app", 1, "2026-01-01T00:00:00Z")
+	g.hook = func(call, repo, ident string) error { return &GhError{Msg: "HTTP 502"} }
 	e.run("push")
 	out, _, _ := e.run("push")
 	eq(t, "retried", out, "PUSH pushed=0 failed=1\n")
@@ -67,12 +72,14 @@ func TestTemporaryErrorIsRetried(t *testing.T) {
 func TestSyncSkipsLocalOnlyRepoWithQueuedOps(t *testing.T) {
 	e := newEnv(t)
 	e.run("close", "lib#3")
-	e.write("../moon.toml", "mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\nlocal = true\n")
-	e.gh.handler = func(args []string, stdin string) (string, error) { return "", nil }
+	e.writeConfig("mirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n[repos.lib]\nlocal = true\n")
+	g := e.useMem()
 	e.run("sync", "--all", "--quiet")
 	e.run("push", "--all")
-	if n := e.gh.count("issue"); n != 0 { // the pull of app is a graphql call
-		t.Fatalf("gh was called %d times for a local-only repo: %v", n, e.gh.calls)
+	for _, c := range g.calls { // only the pull of app may reach GitHub
+		if !strings.HasPrefix(c, "Pull") {
+			t.Fatalf("GitHub was called for a local-only repo: %v", g.calls)
+		}
 	}
 	if len(e.app().loadOutbox()) != 1 {
 		t.Fatal("the queued write must stay")
@@ -88,11 +95,11 @@ func TestAutosyncSwitchesAndStatus(t *testing.T) {
 	e.extra["MOON_AUTOSYNC"] = "0"
 	eq(t, "env off", strings.Split(status(), "\n")[1], "autosync: off (MOON_AUTOSYNC=0)")
 	delete(e.extra, "MOON_AUTOSYNC")
-	e.write("../moon.toml", "autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
+	e.writeConfig("autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
 	eq(t, "config off", strings.Split(status(), "\n")[1], "autosync: off (autosync = false in moon.toml)")
 	e.extra["MOON_AUTOSYNC"] = "1"
 	eq(t, "env on beats config", strings.Split(status(), "\n")[1], "autosync: on, has not run yet")
-	e.write("autosync.log", "2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s\n")
+	e.putAutosyncLog("2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s\n")
 	eq(t, "last run", strings.Split(status(), "\n")[1], "autosync: on, last run 2026-10-19T10:00:00 SYNC pushed=0 failed=5 pulled app=0 in 21.5s")
 	if o, _, _ := e.run("status", "--format", "json"); !strings.Contains(o, `"autosync": {"on": true, "off_reason": null, "last_run": "2026-10-19T10:00:00 SYNC`) {
 		t.Fatal(o)
@@ -144,7 +151,7 @@ func TestAutosyncOffStopsTheBackgroundPushAfterAWrite(t *testing.T) {
 	}
 	e := newEnv(t) // moon.toml says autosync = false
 	delete(e.extra, "ISSUES_NO_AUTOSYNC")
-	e.write("../moon.toml", "autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
+	e.writeConfig("autosync = false\nmirror_dir = \"mirror\"\n[repos.app]\ngithub = \"example/app\"\n")
 	e.extra["ISSUES_TEST_SPAWN"] = e.home + "-spawn"
 	seedIndex(e)
 	e.run("comment", "app#9", "--body", "hi")
@@ -156,8 +163,10 @@ func TestAutosyncOffStopsTheBackgroundPushAfterAWrite(t *testing.T) {
 func TestPermanentOpDoesNotKickABackgroundPush(t *testing.T) {
 	e := newEnv(t)
 	e.run("close", "app#1")
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		return "", &GhError{Msg: "the 'example/app' repository has disabled issues"}
+	g := e.useMem()
+	g.seed("example/app", 1, "2026-01-01T00:00:00Z")
+	g.hook = func(call, repo, ident string) error {
+		return &GhError{Msg: "the 'example/app' repository has disabled issues"}
 	}
 	e.run("push")
 	if ops := e.app().loadOutbox(); len(ops) != 1 || !ops[0].Permanent {

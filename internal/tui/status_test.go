@@ -27,7 +27,7 @@ func statusMirror(t *testing.T) *mirror {
 	mi.claim("app#6", "sonnet-17", 660, 7200)
 	mi.claim("app#3", "haiku", 9660, 7200)
 	mi.claim("app#7", "opus", 3600, 7200)
-	mi.write("app/prs.tsv", "50\topen\t0\tfeature-5\tabc\tmain\t2026-02-22T00:00:00Z\t\t\tdana\t2026-02-23T00:00:00Z\t5\texport: CSV download\n")
+	mi.putPRs("app", "50\topen\t0\tfeature-5\tabc\tmain\t2026-02-22T00:00:00Z\t\t\tdana\t2026-02-23T00:00:00Z\t5\texport: CSV download\n")
 	return mi
 }
 

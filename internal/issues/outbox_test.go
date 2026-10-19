@@ -6,32 +6,6 @@ import (
 	"testing"
 )
 
-// failCreate is a gh that rejects the label `bad` on create, as GitHub does for a label it does not have, and
-// records the labels of each create it accepts.
-func failCreate(created *[][]string) func([]string, string) (string, error) {
-	return func(args []string, stdin string) (string, error) {
-		switch {
-		case args[0] == "api":
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "issue" && args[1] == "create":
-			var labels []string
-			for i, a := range args {
-				if a == "--label" {
-					labels = append(labels, args[i+1])
-				}
-			}
-			if contains(labels, "bad") {
-				return "", &GhError{Msg: "could not add label: 'bad' not found"}
-			}
-			*created = append(*created, labels)
-			return "https://github.com/example/app/issues/50\n", nil
-		}
-		return "", nil
-	}
-}
-
 func opIDOf(t *testing.T, e *env, op string) string {
 	t.Helper()
 	for _, o := range e.app().loadOutbox() {
@@ -46,8 +20,8 @@ func opIDOf(t *testing.T, e *env, op string) string {
 // The incident: a queued create with a bad label retried forever and could only be repaired by hand-editing JSON.
 func TestOutboxEditFixesAStuckCreate(t *testing.T) {
 	e := newEnv(t)
-	var created [][]string
-	e.gh.handler = failCreate(&created)
+	g := e.useMem() // GitHub has bug and area::x, but not the label `bad`: a create with it is rejected
+	g.addLabels("example/app", "bug", "area::x")
 	e.run("new", "-R", "app", "--title", "t", "--body", "text", "-L", "bad")
 	if _, _, code := e.run("push"); code != 1 {
 		t.Fatalf("push of a rejected create must fail, code %d", code)
@@ -68,7 +42,10 @@ func TestOutboxEditFixesAStuckCreate(t *testing.T) {
 	if _, errs, code := e.run("push"); code != 0 {
 		t.Fatalf("push after the fix: %d %s", code, errs)
 	}
-	eq(t, "labels sent", mustJSON(created), `[["bug","area::x"]]`)
+	if len(g.created) != 1 {
+		t.Fatalf("accepted creates: %+v", g.created)
+	}
+	eq(t, "labels sent", mustJSON(g.created[0].Labels), `["bug","area::x"]`)
 	eq(t, "queue empty", mustJSON(len(e.app().loadOutbox())), "0")
 }
 

@@ -27,7 +27,7 @@ func TestRenderParseRoundTrip(t *testing.T) {
 	text := renderIssue(fixtureIssue())
 	want := "---\nnumber: 7\ntitle: \"widget: renders \\\"blank\\\" ünïcode\\ttab\"\nstate: \"open\"\nstate_reason: null\nlabels: [\"bug\", \"area::ui\"]\nmilestone: null\nassignees: []\nauthor: \"ghost\"\ncreated_at: \"2026-01-01T00:00:00Z\"\nupdated_at: \"2026-02-01T00:00:00Z\"\nurl: \"https://github.com/example/app/issues/7\"\n---\n\nline one\nline two\n\n## Comments\n\n### ghost · 2026-01-02T00:00:00Z · id 11\n\nfirst\n"
 	eq(t, "render", text, want)
-	e.write("app/7.md", text)
+	e.putIssue("app", "7", text)
 	h := headerOf(text)
 	eq(t, "title", hStr(h, "title"), "widget: renders \"blank\" ünïcode\ttab")
 	eq(t, "labels", strings.Join(hList(h, "labels"), ","), "bug,area::ui")
@@ -35,7 +35,7 @@ func TestRenderParseRoundTrip(t *testing.T) {
 	if err := a.rebuildIndex("app", nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	eq(t, "index", e.read("app/index.tsv"), "7\topen\t\tbug,area::ui\t2026-02-01T00:00:00Z\twidget: renders \"blank\" ünïcode tab\n")
+	eq(t, "index", e.getFile("app", fileIndex), "7\topen\t\tbug,area::ui\t2026-02-01T00:00:00Z\twidget: renders \"blank\" ünïcode tab\n")
 	if r := a.readIndex("app"); len(r) != 1 || r[0][0] != "7" {
 		t.Fatalf("readIndex %v", r)
 	}
@@ -49,7 +49,7 @@ func TestPRRoundTrip(t *testing.T) {
 	}{7})
 	r := prRowOf(n)
 	e := newEnv(t)
-	e.write("app/prs.tsv", r.tsv())
+	e.putFile("app", filePRs, r.tsv())
 	got := e.app().readPRs("app")["3"]
 	if got != r || got.Title != "fix thing" || got.MergeCommit != "" {
 		t.Fatalf("row %+v", got)
@@ -92,7 +92,7 @@ func TestConfig(t *testing.T) {
 }
 
 func seedIndex(e *env) {
-	e.write("app/index.tsv", "3\topen\tv1\tbug\t2026-02-01T00:00:00Z\tthird\n2\topen\t\t\t2026-02-01T00:00:00Z\tsecond\n1\tclosed\t\t\t2026-02-01T00:00:00Z\tfirst\n")
+	e.putFile("app", fileIndex, "3\topen\tv1\tbug\t2026-02-01T00:00:00Z\tthird\n2\topen\t\t\t2026-02-01T00:00:00Z\tsecond\n1\tclosed\t\t\t2026-02-01T00:00:00Z\tfirst\n")
 }
 
 func TestClaimTTLAndFrontier(t *testing.T) {
@@ -169,12 +169,12 @@ func TestClaimDeadPidIsStale(t *testing.T) {
 func TestClaimFileFormat(t *testing.T) {
 	e := newEnv(t)
 	e.run("claim", "app#5", "--agent", "bot", "--ttl", "2h", "--pid", "0")
-	s := e.read("claims/app-5.json")
+	s := e.getClaim("app", "5")
 	if !strings.HasPrefix(s, `{"agent": "bot", "pid": 0, "host": "`) || !strings.HasSuffix(s, `, "ttl": 7200}`+"\n") {
 		t.Fatal(s)
 	}
 	// the Python tool's float ts parses
-	e.write("claims/app-6.json", `{"agent": "py", "pid": 0, "host": "h", "ts": 1772000000.123456, "ttl": 60}`+"\n")
+	e.putClaim("app", "6", `{"agent": "py", "pid": 0, "host": "h", "ts": 1772000000.123456, "ttl": 60}`+"\n")
 	out, _, _ := e.run("claims")
 	contains0(t, "claims", out, "app#6\tSTALE\tpy\th\tpid=-\t")
 }
@@ -184,6 +184,9 @@ func TestQueueReplay(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
 	seedIndex(e)
+	g := e.useMem()
+	g.seed("example/app", 3, "2026-01-01T00:00:00Z")
+	g.addLabels("example/app", "bug", "x")
 	// queue: a create, then edits on its local ref, a comment and a close on a real issue
 	out, _, _ := e.run("new", "--repo", "app", "--title", "thing: broken", "--body", "hello\n\n", "--label", "bug", "--label", "x")
 	f := strings.Fields(out)
@@ -199,41 +202,32 @@ func TestQueueReplay(t *testing.T) {
 	out, _, _ = e.run("status")
 	contains0(t, "status", out, "outbox=4 errors=0")
 
-	posted := []string{}
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		switch {
-		case args[0] == "api" && strings.Contains(args[1], "/issues?state=all"):
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "issue" && args[1] == "create":
-			posted = append(posted, "create "+strings.Join(args[2:], " "))
-			return "https://github.com/example/app/issues/40\n", nil
-		}
-		posted = append(posted, strings.Join(args[:3], " "))
-		return "", nil
-	}
 	out, _, code := e.run("push")
 	eq(t, "push", out, "PUSH pushed=4 failed=0\n")
 	if code != 0 {
 		t.Fatal(code)
 	}
-	if len(posted) != 4 || !strings.HasPrefix(posted[0], "create -R example/app --title thing: broken --body-file - --label bug --label x") ||
-		posted[1] != "issue comment 2" || posted[2] != "issue comment 40" || posted[3] != "issue close 2" {
-		t.Fatalf("order: %v", posted)
+	// the create goes first, the comment on its local ref lands on the number GitHub gave (101), the close is last
+	eq(t, "order", strings.Join(g.log, ","), "create,rest-comment 2,rest-comment 101,rest-close 2")
+	if len(g.created) != 1 || g.created[0].Title != "thing: broken" || strings.Join(g.created[0].Labels, ",") != "bug,x" || !strings.HasPrefix(g.created[0].Body, "hello") {
+		t.Fatalf("create: %+v", g.created)
 	}
-	ents, _ := os.ReadDir(filepath.Join(e.home, "outbox"))
-	if len(ents) != 0 {
-		t.Fatalf("outbox not drained: %d", len(ents))
+	if i := g.issue("example/app", 2); i.state != "CLOSED" || i.stateReason != "NOT_PLANNED" {
+		t.Fatalf("close: %+v", i)
 	}
-	contains0(t, "localmap", e.read("localmap.tsv"), "\t40\n")
+	if n := len(e.app().loadOutbox()); n != 0 {
+		t.Fatalf("outbox not drained: %d", n)
+	}
+	if got := e.app().mirror().LocalIDs.Lookup("app", strings.TrimPrefix(ref, "app#")); got != 101 {
+		t.Fatalf("localmap: %d", got)
+	}
 	// a later op on the old local ref resolves through localmap
 	_, _, code = e.run("comment", ref, "--body", "late")
 	if code != 0 {
 		t.Fatal("late comment on landed local ref")
 	}
 	ops := e.app().loadOutbox()
-	if len(ops) != 1 || ops[0].Ref != "app#40" {
+	if len(ops) != 1 || ops[0].Ref != "app#101" {
 		t.Fatalf("%+v", ops)
 	}
 }
@@ -241,17 +235,19 @@ func TestQueueReplay(t *testing.T) {
 func TestQueueFailureKeepsOrderAndRetries(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/2.md", renderIssue(fixtureIssueNum(2)))
+	e.putIssue("app", "2", renderIssue(fixtureIssueNum(2)))
 	seedIndex(e)
 	e.run("comment", "app#2", "--body", "one")
 	e.run("label", "app#2", "--add", "bug")
 	e.run("comment", "app#3", "--body", "other issue")
+	g := e.useMem()
+	g.seed("example/app", 3, "2026-01-01T00:00:00Z")
 	fail := true
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		if fail && args[0] == "issue" && args[1] == "comment" && args[2] == "2" {
-			return "", &GhError{Msg: "boom"}
+	g.hook = func(call, repo, ident string) error {
+		if fail && call == "CommentIssue" && ident == "2" {
+			return &GhError{Msg: "boom"}
 		}
-		return "", nil
+		return nil
 	}
 	out, _, code := e.run("push")
 	// the failing ref is skipped for the rest of the run; the other ref still goes
@@ -259,7 +255,7 @@ func TestQueueFailureKeepsOrderAndRetries(t *testing.T) {
 	if code != 1 {
 		t.Fatal(code)
 	}
-	if e.gh.count("issue", "edit") != 0 {
+	if g.count("EditIssue") != 0 {
 		t.Fatal("label op on the same ref must not jump ahead of the failed comment")
 	}
 	ops := e.app().loadOutbox()
@@ -277,22 +273,23 @@ func TestQueueFailureKeepsOrderAndRetries(t *testing.T) {
 	if code != 0 || len(e.app().loadOutbox()) != 0 {
 		t.Fatal("replay did not drain")
 	}
+	eq(t, "applied in queue order", strings.Join(g.log, ","), "rest-comment 3,rest-comment 2,rest-edit 2")
 }
 
 func TestCommentReplayAfterTimeoutDoesNotDoublePost(t *testing.T) {
 	e := newEnv(t)
 	e.run("comment", "app#2", "--body", "once")
 	op := e.app().loadOutbox()[0]
-	posts := 0
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		if args[0] == "issue" && args[1] == "comment" {
-			posts++
-			return "", &GhError{Msg: "timeout after 90s: gh issue comment", Timeout: true}
+	g := e.useMem()
+	g.seed("example/app", 2, "2026-01-01T00:00:00Z")
+	g.hook = func(call, repo, ident string) error {
+		if call == "CommentIssue" {
+			return &GhError{Msg: "timeout after 90s: gh issue comment", Timeout: true}
 		}
-		return "", nil
+		return nil
 	}
 	e.run("push")
-	if posts != 1 {
+	if posts := g.count("CommentIssue"); posts != 1 {
 		t.Fatal(posts)
 	}
 	ops := e.app().loadOutbox()
@@ -300,16 +297,11 @@ func TestCommentReplayAfterTimeoutDoesNotDoublePost(t *testing.T) {
 		t.Fatal("a timeout must leave the op marked inflight")
 	}
 	// next run: the comment is already on GitHub (the timed-out call did land)
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		if args[0] == "api" {
-			return "once\n\n<!-- op-id: " + op.OpID + " -->\n", nil
-		}
-		posts++
-		return "", nil
-	}
+	g.hook = nil
+	g.issue("example/app", 2).comments = []string{"once\n\n<!-- op-id: " + op.OpID + " -->\n"}
 	out, _, _ := e.run("push")
 	eq(t, "push", out, "PUSH pushed=1 failed=0\n")
-	if posts != 1 {
+	if posts := g.count("CommentIssue"); posts != 1 {
 		t.Fatalf("comment re-posted: %d", posts)
 	}
 }
@@ -320,20 +312,22 @@ func TestCreateIsIdempotentByMarker(t *testing.T) {
 	ref := strings.Fields(out)[3]
 	lid := strings.TrimPrefix(ref, "app#")
 	// a mirror file already carries the marker: the create must not call gh
-	e.write("app/55.md", "---\nnumber: 55\n---\n\nbody <!-- local-id: "+lid+" -->\n")
-	e.gh.handler = func(args []string, stdin string) (string, error) { return "", &GhError{Msg: "must not be called"} }
+	e.putIssue("app", "55", "---\nnumber: 55\n---\n\nbody <!-- local-id: "+lid+" -->\n")
+	g := e.useMem()
 	out, _, _ = e.run("push")
 	eq(t, "push", out, "PUSH pushed=1 failed=0\n")
-	if len(e.gh.calls) != 0 {
-		t.Fatalf("gh called: %v", e.gh.calls)
+	if g.callCount() != 0 {
+		t.Fatalf("GitHub called: %v", g.calls)
 	}
-	contains0(t, "localmap", e.read("localmap.tsv"), lid+"\t55\n")
+	if got := e.app().mirror().LocalIDs.Lookup("app", lid); got != 55 {
+		t.Fatalf("localmap: %d", got)
+	}
 }
 
 func TestShowOverlaysPending(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/2.md", renderIssue(fixtureIssueNum(2)))
+	e.putIssue("app", "2", renderIssue(fixtureIssueNum(2)))
 	seedIndex(e)
 	e.run("label", "app#2", "--add", "new", "--remove", "bug")
 	e.run("milestone", "app#2", "v9")
@@ -370,27 +364,20 @@ func TestPullWithFakeGitHub(t *testing.T) {
 	pr := map[string]any{"number": 6, "title": "p", "body": "", "state": "OPEN", "isDraft": true, "headRefName": "h", "headRefOid": "o", "baseRefName": "main",
 		"createdAt": "2026-02-01T00:00:00Z", "mergedAt": nil, "mergeCommit": nil, "author": nil, "updatedAt": "2026-02-03T00:00:00Z", "url": "pu",
 		"closingIssuesReferences": map[string]any{"nodes": []any{map[string]any{"number": 5}}}}
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		var req struct{ Query string }
-		json.Unmarshal([]byte(stdin), &req)
-		if strings.Contains(req.Query, "pullRequests(") && !strings.Contains(req.Query, "issues(") {
-			return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
-				"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{pr}}}}}), nil
-		}
-		return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{
-			"milestones": map[string]any{"nodes": []any{map[string]any{"number": 3, "title": "v1", "state": "OPEN", "dueOn": "2026-04-01T00:00:00Z", "description": "first\tline\nsecond", "updatedAt": "2026-02-01T00:00:00Z"}}},
-			"issues":     map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{issue}}}}}), nil
-	}
+	e.useMem().cannedPull(t, "example/app", map[string]any{
+		"milestones":   map[string]any{"nodes": []any{map[string]any{"number": 3, "title": "v1", "state": "OPEN", "dueOn": "2026-04-01T00:00:00Z", "description": "first\tline\nsecond", "updatedAt": "2026-02-01T00:00:00Z"}}},
+		"issues":       map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{issue}},
+		"pullRequests": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{pr}}})
 	e.now = time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)
 	out, _, code := e.run("pull", "--repo", "app")
 	eq(t, "pull", out, "PULL app=1\n")
 	if code != 0 {
 		t.Fatal(code)
 	}
-	eq(t, "index", e.read("app/index.tsv"), "5\tclosed\tv1\tbug\t2026-02-02T00:00:00Z\tt\n")
-	eq(t, "cursor", e.read("app/cursor"), "2026-02-02T00:00:00Z\n")
-	eq(t, "milestones", e.read("app/milestones.tsv"), "3\t\tv1\topen\t2026-04-01\tfirst\\tline\\nsecond\t2026-02-01T00:00:00Z\n")
-	eq(t, "prs", e.read("app/prs.tsv"), "6\topen\t1\th\to\tmain\t2026-02-01T00:00:00Z\t\t\tghost\t2026-02-03T00:00:00Z\t5\tp\n")
+	eq(t, "index", e.getFile("app", fileIndex), "5\tclosed\tv1\tbug\t2026-02-02T00:00:00Z\tt\n")
+	eq(t, "cursor", e.getFile("app", fileCursor), "2026-02-02T00:00:00Z\n")
+	eq(t, "milestones", e.getFile("app", fileMilestones), "3\t\tv1\topen\t2026-04-01\tfirst\\tline\\nsecond\t2026-02-01T00:00:00Z\n")
+	eq(t, "prs", e.getFile("app", filePRs), "6\topen\t1\th\to\tmain\t2026-02-01T00:00:00Z\t\t\tghost\t2026-02-03T00:00:00Z\t5\tp\n")
 	out, _, _ = e.run("pull", "--repo", "app")
 	eq(t, "idempotent pull", out, "PULL app=0\n")
 	out, _, _ = e.run("prs", "--repo", "app")
@@ -399,12 +386,12 @@ func TestPullWithFakeGitHub(t *testing.T) {
 	e.now = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	out, _, _ = e.run("prune", "--repo", "app")
 	eq(t, "prune", out, "PRUNE removed app=1\n")
-	if e.exists("app/5.md") || !strings.Contains(e.read("app/index.tsv"), "5\tclosed") {
+	if e.hasIssue("app", "5") || !strings.Contains(e.getFile("app", fileIndex), "5\tclosed") {
 		t.Fatal("prune must drop the file and keep the row")
 	}
 	// a claim guards the file from pruning
-	e.write("app/5.md", renderIssue(fixtureIssueNum(5)))
-	e.write("app/5.md", strings.Replace(e.read("app/5.md"), `state: "open"`, `state: "closed"`, 1))
+	e.putIssue("app", "5", renderIssue(fixtureIssueNum(5)))
+	e.putIssue("app", "5", strings.Replace(e.getIssue("app", "5"), `state: "open"`, `state: "closed"`, 1))
 	e.run("claim", "app#5", "--agent", "g")
 	out, _, _ = e.run("prune", "--repo", "app")
 	eq(t, "prune guarded", out, "PRUNE removed app=0\n")
@@ -416,8 +403,8 @@ func TestAutosyncSpawnsOnceWhenStale(t *testing.T) {
 	spawn := filepath.Join(t.TempDir(), "spawn.log")
 	e.extra["ISSUES_TEST_SPAWN"] = spawn
 	seedIndex(e)
-	e.write("app/lastpull", "1772366400\n")
-	e.write("lib/lastpull", "1772366400\n")
+	e.putFile("app", fileLastpull, "1772366400\n")
+	e.putFile("lib", fileLastpull, "1772366400\n")
 	e.now = time.Unix(1772366400+601, 0)
 	_, errs, _ := e.run("ls")
 	contains0(t, "stderr", errs, "(mirror 10 min old; refreshing in background)")
@@ -426,7 +413,7 @@ func TestAutosyncSpawnsOnceWhenStale(t *testing.T) {
 	b, _ := os.ReadFile(spawn)
 	eq(t, "spawns", string(b), "spawn\n")
 	// fresh mirror: no spawn
-	os.Remove(filepath.Join(e.home, ".autosync"))
+	e.store().Markers.Release()
 	e.now = time.Unix(1772366400+60, 0)
 	_, errs, _ = e.run("ls")
 	eq(t, "fresh", errs, "")
@@ -546,14 +533,13 @@ func TestWriteKicksBackgroundPush(t *testing.T) {
 	e.run("comment", "app#9", "--body", "again")
 	b, _ = os.ReadFile(spawn)
 	eq(t, "no second spawn", string(b), "spawn\n")
-	if !e.exists(".autosync.again") {
+	if !e.store().Markers.TakeAgain() {
 		t.Fatal("a write during a running sync must leave .autosync.again")
 	}
 	// reads do not kick a push
-	os.Remove(filepath.Join(e.home, ".autosync"))
-	os.Remove(filepath.Join(e.home, ".autosync.again"))
-	e.write("app/lastpull", strconv.FormatInt(e.now.Unix(), 10)+"\n")
-	e.write("lib/lastpull", strconv.FormatInt(e.now.Unix(), 10)+"\n")
+	e.store().Markers.Release()
+	e.putFile("app", fileLastpull, strconv.FormatInt(e.now.Unix(), 10)+"\n")
+	e.putFile("lib", fileLastpull, strconv.FormatInt(e.now.Unix(), 10)+"\n")
 	e.run("ls")
 	b, _ = os.ReadFile(spawn)
 	eq(t, "read: no spawn", string(b), "spawn\n")

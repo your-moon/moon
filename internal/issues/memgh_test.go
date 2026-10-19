@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -23,6 +24,17 @@ type memGH struct {
 	muts   int               // mutations sent
 	fail   map[string]string // issue node id -> why its mutations are refused
 	clock  int
+
+	// hook refuses a call when it returns an error. It gets the call name, the repo and the issue number
+	// (or label name, milestone number) the call targets.
+	hook                func(call, repo, ident string) error
+	inflight, maxFlight int                  // calls inside enter at once: the overlap the push pool reaches (needs delay > 0)
+	labelSpecs          []LabelSpec          // every label definition sent
+	created             []NewIssue           // every accepted create, in order
+	canned              map[string]*RepoPull // repo -> a pull page served as is (hand-built issues, labels, milestones, PRs)
+	msFailCreate        bool                 // milestone creates fail without storing anything
+	msCreateLost        bool                 // the next milestone create is stored, then reports a failure
+	msCaseTolerant      bool                 // a title that differs only in case is accepted as a new milestone
 }
 
 type memRepo struct {
@@ -39,6 +51,7 @@ type memIssue struct {
 	labels             []string
 	milestone, updated string
 	comments           []string
+	assignees          []string
 }
 
 func newMemGH() *memGH { return &memGH{repos: map[string]*memRepo{}, fail: map[string]string{}} }
@@ -58,6 +71,34 @@ func (m *memGH) seed(repo string, n int, updated string) {
 	for i := 1; i <= n; i++ {
 		r.issues[i] = &memIssue{num: i, title: fmt.Sprintf("t%d", i), body: "b", state: "OPEN", updated: updated}
 	}
+}
+
+// put adds (or replaces) an issue.
+func (m *memGH) put(repo string, i memIssue) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if i.updated == "" {
+		i.updated = "2026-01-01T00:00:00Z"
+	}
+	if i.state == "" {
+		i.state = "OPEN"
+	}
+	m.repo(repo).issues[i.num] = &i
+}
+
+// cannedPull makes the first pull page of repo exactly v (the repository object GitHub would answer with:
+// labels, milestones, issues, pullRequests), decoded into the typed RepoPull.
+func (m *memGH) cannedPull(t *testing.T, repo string, v map[string]any) {
+	t.Helper()
+	b, _ := json.Marshal(v)
+	var rp RepoPull
+	if err := json.Unmarshal(b, &rp); err != nil {
+		t.Fatal(err)
+	}
+	if m.canned == nil {
+		m.canned = map[string]*RepoPull{}
+	}
+	m.canned[repo] = &rp
 }
 
 func (m *memGH) addLabels(repo string, names ...string) {
@@ -96,10 +137,21 @@ func (m *memGH) count(call string) int {
 }
 
 func (m *memGH) enter(call string) func() {
+	m.mu.Lock()
+	m.inflight++
+	m.maxFlight = max(m.maxFlight, m.inflight)
+	m.mu.Unlock()
 	time.Sleep(m.delay)
 	m.mu.Lock()
 	m.calls = append(m.calls, call)
-	return m.mu.Unlock
+	return func() { m.inflight--; m.mu.Unlock() }
+}
+
+func (m *memGH) refused(call, repo, ident string) error {
+	if m.hook == nil {
+		return nil
+	}
+	return m.hook(call, repo, ident)
 }
 
 func (m *memGH) touch(i *memIssue) {
@@ -110,7 +162,11 @@ func (m *memGH) touch(i *memIssue) {
 func nodeID(n int) string { return "ID" + strconv.Itoa(n) }
 
 func (i *memIssue) node() *issueNode {
-	var labels, comments []any
+	var labels, comments, assignees []any
+	assignees = []any{}
+	for _, a := range i.assignees {
+		assignees = append(assignees, map[string]any{"login": a})
+	}
 	for _, l := range i.labels {
 		labels = append(labels, map[string]any{"name": l})
 	}
@@ -126,7 +182,7 @@ func (i *memIssue) node() *issueNode {
 	}
 	raw, _ := json.Marshal(map[string]any{"number": i.num, "title": i.title, "body": i.body, "state": i.state, "stateReason": reason,
 		"url": fmt.Sprintf("u%d", i.num), "createdAt": "2026-01-01T00:00:00Z", "updatedAt": i.updated, "id": nodeID(i.num),
-		"author": nil, "milestone": ms, "assignees": map[string]any{"nodes": []any{}}, "labels": map[string]any{"nodes": labels},
+		"author": nil, "milestone": ms, "assignees": map[string]any{"nodes": assignees}, "labels": map[string]any{"nodes": labels},
 		"comments": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": comments}})
 	var n issueNode
 	json.Unmarshal(raw, &n)
@@ -135,8 +191,14 @@ func (i *memIssue) node() *issueNode {
 
 func (m *memGH) PullIssues(repo string, q PullQuery) (RepoPull, error) {
 	defer m.enter("PullIssues")()
+	if err := m.refused("PullIssues", repo, ""); err != nil {
+		return RepoPull{}, err
+	}
 	m.sinces = append(m.sinces, q.Since)
 	r := m.repo(repo)
+	if c := m.canned[repo]; c != nil {
+		return *c, nil
+	}
 	var list []*memIssue
 	for _, i := range r.issues {
 		if q.Since == "" || i.updated >= q.Since {
@@ -155,6 +217,14 @@ func (m *memGH) PullIssues(repo string, q PullQuery) (RepoPull, error) {
 			Nodes []labelNode `json:"nodes"`
 		}{}
 		out.PullRequests = &prPage{}
+		for _, ms := range r.milestones {
+			n := milestoneNode{Number: ms.Number, Title: ms.Title, State: strings.ToUpper(ms.State), Description: ms.Description, UpdatedAt: "2026-03-01T00:00:00Z"}
+			if ms.DueOn != "" {
+				d := ms.DueOn + "T00:00:00Z"
+				n.DueOn = &d
+			}
+			out.Milestones.Nodes = append(out.Milestones.Nodes, n)
+		}
 		var names []string
 		for n := range r.labels {
 			names = append(names, n)
@@ -182,6 +252,9 @@ func (m *memGH) PullRequest(string, int) (*prNode, error) {
 
 func (m *memGH) Issue(repo string, num int) (*issueNode, error) {
 	defer m.enter("Issue")()
+	if err := m.refused("Issue", repo, strconv.Itoa(num)); err != nil {
+		return nil, err
+	}
 	if i := m.repo(repo).issues[num]; i != nil {
 		return i.node(), nil
 	}
@@ -199,6 +272,9 @@ func (m *memGH) need(repo, ident string) (*memIssue, error) {
 
 func (m *memGH) CreateIssue(repo string, in NewIssue) (int, error) {
 	defer m.enter("CreateIssue")()
+	if err := m.refused("CreateIssue", repo, ""); err != nil {
+		return 0, err
+	}
 	r := m.repo(repo)
 	for _, l := range in.Labels {
 		if _, ok := r.labels[l]; !ok {
@@ -209,12 +285,16 @@ func (m *memGH) CreateIssue(repo string, in NewIssue) (int, error) {
 	i := &memIssue{num: r.nextNum, title: in.Title, body: in.Body, state: "OPEN", labels: in.Labels, milestone: in.Milestone}
 	m.touch(i)
 	r.issues[i.num] = i
+	m.created = append(m.created, in)
 	m.log = append(m.log, "create")
 	return i.num, nil
 }
 
 func (m *memGH) EditIssue(repo, ident string, e IssueEdit) error {
 	defer m.enter("EditIssue")()
+	if err := m.refused("EditIssue", repo, ident); err != nil {
+		return err
+	}
 	i, err := m.need(repo, ident)
 	if err != nil {
 		return err
@@ -261,6 +341,9 @@ func editLabels(have, add, remove []string) []string {
 
 func (m *memGH) CloseIssue(repo, ident, reason, comment string) error {
 	defer m.enter("CloseIssue")()
+	if err := m.refused("CloseIssue", repo, ident); err != nil {
+		return err
+	}
 	i, err := m.need(repo, ident)
 	if err != nil {
 		return err
@@ -276,6 +359,9 @@ func (m *memGH) CloseIssue(repo, ident, reason, comment string) error {
 
 func (m *memGH) ReopenIssue(repo, ident string) error {
 	defer m.enter("ReopenIssue")()
+	if err := m.refused("ReopenIssue", repo, ident); err != nil {
+		return err
+	}
 	i, err := m.need(repo, ident)
 	if err != nil {
 		return err
@@ -288,6 +374,9 @@ func (m *memGH) ReopenIssue(repo, ident string) error {
 
 func (m *memGH) CommentIssue(repo, ident, body string) error {
 	defer m.enter("CommentIssue")()
+	if err := m.refused("CommentIssue", repo, ident); err != nil {
+		return err
+	}
 	i, err := m.need(repo, ident)
 	if err != nil {
 		return err
@@ -300,6 +389,9 @@ func (m *memGH) CommentIssue(repo, ident, body string) error {
 
 func (m *memGH) HasComment(repo, ident, marker string) (bool, error) {
 	defer m.enter("HasComment")()
+	if err := m.refused("HasComment", repo, ident); err != nil {
+		return false, err
+	}
 	i, err := m.need(repo, ident)
 	if err != nil {
 		return false, err
@@ -314,6 +406,9 @@ func (m *memGH) HasComment(repo, ident, marker string) (bool, error) {
 
 func (m *memGH) FindIssueByMarker(repo, lid, since string) (int, error) {
 	defer m.enter("FindIssueByMarker")()
+	if err := m.refused("FindIssueByMarker", repo, ""); err != nil {
+		return 0, err
+	}
 	for _, i := range m.repo(repo).issues {
 		if strings.Contains(i.body, "<!-- local-id: "+lid+" -->") {
 			return i.num, nil
@@ -420,33 +515,69 @@ func labelNames(v any) []string {
 
 func (m *memGH) CreateLabel(repo string, l LabelSpec) error {
 	defer m.enter("CreateLabel")()
+	if err := m.refused("CreateLabel", repo, l.Name); err != nil {
+		return err
+	}
 	m.repo(repo).labels[l.Name] = l.Color
+	m.log = append(m.log, "create-label "+l.Name)
+	m.labelSpecs = append(m.labelSpecs, l)
 	return nil
 }
 
 func (m *memGH) ListMilestones(repo string) ([]RemoteMilestone, error) {
 	defer m.enter("ListMilestones")()
+	if err := m.refused("ListMilestones", repo, ""); err != nil {
+		return nil, err
+	}
 	return append([]RemoteMilestone(nil), m.repo(repo).milestones...), nil
 }
 
 func (m *memGH) CreateMilestone(repo string, ms RemoteMilestone) (RemoteMilestone, error) {
 	defer m.enter("CreateMilestone")()
+	if err := m.refused("CreateMilestone", repo, ""); err != nil {
+		return RemoteMilestone{}, err
+	}
 	r := m.repo(repo)
+	m.log = append(m.log, "POST milestone "+ms.Title)
+	if m.msFailCreate {
+		return RemoteMilestone{}, &GhError{Msg: "HTTP 502"}
+	}
+	for _, have := range r.milestones {
+		if have.Title == ms.Title || (!m.msCaseTolerant && strings.EqualFold(have.Title, ms.Title)) {
+			return RemoteMilestone{}, &GhError{Msg: "HTTP 422: Validation Failed (already_exists)"}
+		}
+	}
 	ms.Number, ms.State = len(r.milestones)+1, "open"
 	r.milestones = append(r.milestones, ms)
+	if m.msCreateLost {
+		m.msCreateLost = false
+		return RemoteMilestone{}, &GhError{Msg: "connection reset"}
+	}
 	return ms, nil
 }
 
 func (m *memGH) UpdateMilestone(repo string, number int, ch MilestoneChange) error {
 	defer m.enter("UpdateMilestone")()
+	if err := m.refused("UpdateMilestone", repo, strconv.Itoa(number)); err != nil {
+		return err
+	}
 	r := m.repo(repo)
 	for k := range r.milestones {
 		if r.milestones[k].Number == number {
+			m.log = append(m.log, fmt.Sprintf("PATCH milestone %d", number))
 			if ch.Title != nil {
 				r.milestones[k].Title = *ch.Title
 			}
+			if ch.Description != nil {
+				r.milestones[k].Description = *ch.Description
+			}
 			if ch.State != nil {
 				r.milestones[k].State = *ch.State
+			}
+			if ch.ClearDue {
+				r.milestones[k].DueOn = ""
+			} else if ch.Due != nil {
+				r.milestones[k].DueOn = *ch.Due
 			}
 			return nil
 		}

@@ -21,7 +21,7 @@ func showJSONOf(t *testing.T, e *env, ref string) map[string]any {
 }
 
 func seedIssue7(e *env) {
-	e.write("app/7.md", renderIssue(fixtureIssue()))
+	e.putIssue("app", "7", renderIssue(fixtureIssue()))
 	if err := e.app().rebuildIndex("app", nil, nil); err != nil {
 		e.t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestShowJSONPicksTheRightQueuedIssueAndOps(t *testing.T) {
 func TestShowJSONFollowsLandedLocalRef(t *testing.T) {
 	e := newEnv(t)
 	seedIssue7(e)
-	e.write("localmap.tsv", "app\tL-3\t7\n") // the create for L-3 landed as #7
+	e.mapLocal("app", "L-3", 7) // the create for L-3 landed as #7
 	m := showJSONOf(t, e, "app#L-3")
 	eq(t, "ref", m["ref"].(string), "app#7")
 	eq(t, "number", mustJSON(m["number"]), "7")
@@ -117,16 +117,14 @@ func TestShowJSONFollowsLandedLocalRef(t *testing.T) {
 
 func TestShowJSONLiveFetchForPrunedIssue(t *testing.T) {
 	e := newEnv(t)
-	e.write("app/index.tsv", "12\tclosed\t\tbug\t2025-01-01T00:00:00Z\told\n") // listed, file pruned
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		return `{"data":{"repository":{"issue":{"number":12,"title":"old","body":"from github","state":"CLOSED","labels":{"nodes":[{"name":"bug"}]},` +
-			`"assignees":{"nodes":[{"login":"sam"}]},"comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`, nil
-	}
+	e.putFile("app", fileIndex, "12\tclosed\t\tbug\t2025-01-01T00:00:00Z\told\n") // listed, file pruned
+	g := e.useMem()
+	g.put("example/app", memIssue{num: 12, title: "old", body: "from github", state: "CLOSED", labels: []string{"bug"}, assignees: []string{"sam"}})
 	m := showJSONOf(t, e, "app#12")
 	eq(t, "body", m["body"].(string), "from github")
 	eq(t, "state", m["state"].(string), "closed")
 	eq(t, "assignees", mustJSON(m["assignees"]), `["sam"]`)
-	e.gh.handler = func([]string, string) (string, error) { return "", &GhError{Msg: "offline"} }
+	g.hook = func(call, repo, ident string) error { return &GhError{Msg: "offline"} }
 	_, errs, code := e.run("show", "app#12", "--format", "json")
 	if code != 1 || !strings.Contains(errs, "live fetch failed: offline") {
 		t.Fatalf("code=%d err=%q", code, errs)
@@ -139,7 +137,7 @@ func TestShowJSONQueuedNewBeatsLocalmap(t *testing.T) {
 	seedIssue7(e)
 	e.run("new", "--repo", "app", "--title", "first", "--body", "one")
 	e.run("new", "--repo", "app", "--title", "second", "--body", "two")
-	e.write("localmap.tsv", "app\tL-1\t7\n")
+	e.mapLocal("app", "L-1", 7)
 	eq(t, "queued L-1 stays local", showJSONOf(t, e, "app#L-1")["ref"].(string), "app#L-1")
 	for _, op := range e.app().loadOutbox() {
 		if op.Ref == "app#L-1" {

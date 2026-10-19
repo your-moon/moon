@@ -78,7 +78,8 @@ func TestScopeDefaultsPerCommand(t *testing.T) {
 }
 
 func TestScopePullFollowsScope(t *testing.T) {
-	e := scopedEnv(t) // the fake gh has no handler: each pull fails and names its repo on stderr
+	e := scopedEnv(t) // GitHub refuses every pull: each fails and names its repo on stderr
+	e.useMem().hook = func(call, repo, ident string) error { return &GhError{Msg: "offline"} }
 	_, errs, _ := e.run("pull")
 	if !strings.Contains(errs, "pull app failed") || strings.Contains(errs, "pull lib failed") {
 		t.Errorf("scoped pull: %q", errs)
@@ -101,7 +102,7 @@ func TestScopePullFollowsScope(t *testing.T) {
 
 func TestBareNumbers(t *testing.T) {
 	e := scopedEnv(t)
-	e.write("app/12.md", "---\ntitle: x\nstate: open\n---\nbody\n")
+	e.putIssue("app", "12", "---\ntitle: x\nstate: open\n---\nbody\n")
 	out, _, code := e.run("show", "12")
 	if code != 0 || !strings.Contains(out, "claim: alice") {
 		t.Fatalf("show 12 in app scope: %d %q", code, out)
@@ -113,7 +114,7 @@ func TestBareNumbers(t *testing.T) {
 		t.Errorf("explicit ref: %q", out2)
 	}
 	// an alias in the ref still wins over the scope
-	e.write("lib/3.md", "---\ntitle: p\nstate: open\n---\nbody\n")
+	e.putIssue("lib", "3", "---\ntitle: p\nstate: open\n---\nbody\n")
 	if out3, _, code := e.run("show", "lib#3"); code != 0 || !strings.Contains(out3, "claim: none") {
 		t.Errorf("lib#3 from an app checkout: %d %q", code, out3)
 	}
@@ -143,12 +144,12 @@ func TestBareNumberInGlobalScope(t *testing.T) {
 		t.Errorf("unique number: %d %q", code, out)
 	}
 	// #12 in both repos: ambiguous, exit 2, candidates listed, nothing claimed
-	e.write("lib/index.tsv", "12\topen\t\t\t2026-02-12T09:00:00Z\tsame number\n3\topen\t\tkind:bug\t2026-02-12T09:00:00Z\tparser: crashes on empty input\n")
+	e.putFile("lib", fileIndex, "12\topen\t\t\t2026-02-12T09:00:00Z\tsame number\n3\topen\t\tkind:bug\t2026-02-12T09:00:00Z\tparser: crashes on empty input\n")
 	out, errs, code := e.run("claim", "12", "--agent", "carol")
 	if code != 2 || out != "" || !strings.Contains(errs, "ambiguous") || !strings.Contains(errs, "app#12 or lib#12") {
 		t.Errorf("ambiguous: %d %q %q", code, out, errs)
 	}
-	if e.exists("claims/lib-12.json") {
+	if e.hasClaim("lib", "12") {
 		t.Errorf("an ambiguous number must not claim anything")
 	}
 	// unknown everywhere
@@ -157,7 +158,7 @@ func TestBareNumberInGlobalScope(t *testing.T) {
 		t.Errorf("unknown number: %d %q", code, errs)
 	}
 	// -R narrows the ambiguity
-	e.write("lib/12.md", "---\ntitle: x\nstate: open\n---\nbody\n")
+	e.putIssue("lib", "12", "---\ntitle: x\nstate: open\n---\nbody\n")
 	if _, _, code = e.run("show", "-R", "lib", "12"); code != 0 {
 		t.Errorf("-R lib 12: %d", code)
 	}
@@ -177,7 +178,7 @@ func TestNewNeedsOneRepo(t *testing.T) {
 	if code != 2 || out != "" || !strings.Contains(errs, "new needs one repo") || !strings.Contains(errs, "app, lib") || !strings.Contains(errs, "not inside a project") {
 		t.Errorf("global new: %d %q %q", code, out, errs)
 	}
-	if e.exists("outbox") {
+	if len(e.outboxKeys()) != 0 {
 		t.Errorf("a refused new must queue nothing")
 	}
 	// several repos named: refuse too
@@ -325,7 +326,7 @@ func TestMilestoneWritesFollowScope(t *testing.T) {
 func TestSweepFollowsScope(t *testing.T) {
 	e := newEnv(t)
 	humanFixture(e)
-	e.write("claims/lib-3.json", `{"agent": "zed", "pid": 0, "host": "box", "ts": 1772300000, "ttl": 60}`+"\n") // long expired
+	e.putClaim("lib", "3", `{"agent": "zed", "pid": 0, "host": "box", "ts": 1772300000, "ttl": 60}`+"\n") // long expired
 	e.git = fakeGit(appRemote)
 	if out, _, _ := e.run("sweep"); strings.Contains(out, "lib#3") {
 		t.Errorf("sweep in the app project must not list lib: %q", out)

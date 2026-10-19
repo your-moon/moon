@@ -3,7 +3,6 @@ package issues
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,9 +27,7 @@ func TestDeltaPullTouchesOnlyChanged(t *testing.T) {
 		t.Fatalf("first pull made %d gh calls, want 1 (issues, labels, milestones and PRs together)", f.callCount())
 	}
 	// an unchanged file edited on disk: a delta must leave it alone, a full pull restores it
-	p := filepath.Join(e.home, "app", "7.md")
-	orig, _ := os.ReadFile(p)
-	os.WriteFile(p, append(orig, "LOCAL\n"...), 0o644)
+	e.putIssue("app", "7", e.getIssue("app", "7")+"LOCAL\n")
 	f.issue("example/app", 3).updated, f.issue("example/app", 4).updated = "2026-03-01T00:00:00Z", "2026-03-01T00:00:00Z"
 	e.now = e.now.Add(time.Hour)
 	before := f.callCount()
@@ -42,10 +39,10 @@ func TestDeltaPullTouchesOnlyChanged(t *testing.T) {
 	if f.sinces[len(f.sinces)-1] == "" {
 		t.Fatal("delta pull sent no since")
 	}
-	if b, _ := os.ReadFile(p); !strings.HasSuffix(string(b), "LOCAL\n") {
+	if !strings.HasSuffix(e.getIssue("app", "7"), "LOCAL\n") {
 		t.Fatal("delta pull rewrote an unchanged issue file")
 	}
-	idx := e.read("app/index.tsv")
+	idx := e.getFile("app", fileIndex)
 	if !strings.Contains(idx, "\n4\topen\t\t\t2026-03-01T00:00:00Z\tt4\n") && !strings.HasPrefix(idx, "4\t") {
 		t.Fatalf("index row of a changed issue not updated:\n%s", idx)
 	}
@@ -55,10 +52,10 @@ func TestDeltaPullTouchesOnlyChanged(t *testing.T) {
 	// --full re-reads everything and drops what GitHub no longer has
 	delete(f.repo("example/app").issues, 9)
 	out, _, _ = e.run("pull", "--repo", "app", "--full")
-	if f.sinces[len(f.sinces)-1] != "" || e.exists("app/9.md") {
+	if f.sinces[len(f.sinces)-1] != "" || e.hasIssue("app", "9") {
 		t.Fatalf("--full did not fetch everything: %q since=%q", out, f.sinces[len(f.sinces)-1])
 	}
-	if b, _ := os.ReadFile(p); strings.HasSuffix(string(b), "LOCAL\n") {
+	if strings.HasSuffix(e.getIssue("app", "7"), "LOCAL\n") {
 		t.Fatal("--full left the tampered file")
 	}
 }
@@ -68,7 +65,7 @@ func TestPullWithoutLastpullIsFull(t *testing.T) {
 	f := e.useMem()
 	seedPull(f, 5)
 	e.run("pull", "--repo", "app")
-	os.Remove(filepath.Join(e.home, "app", "lastpull"))
+	e.rawRemove("app/lastpull")
 	e.run("pull", "--repo", "app")
 	if got := f.sinces[len(f.sinces)-1]; got != "" {
 		t.Fatalf("pull without lastpull sent since=%q, want a full pull", got)

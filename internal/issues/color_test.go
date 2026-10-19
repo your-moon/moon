@@ -1,7 +1,6 @@
 package issues
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -264,7 +263,7 @@ const esc = "\x1b"
 func TestNoEscapesWhenPiped(t *testing.T) {
 	e := newEnv(t)
 	workFixture(e)
-	e.write("app/labels.tsv", "kind:bug\td73a4a\tbroken\narea:ui\t1d76db\tui\n")
+	e.putFile("app", fileLabels, "kind:bug\td73a4a\tbroken\narea:ui\t1d76db\tui\n")
 	for _, force := range [][]string{nil, {"--color", "always"}} {
 		for _, cmd := range [][]string{{"ls", "-S", "all"}, {"ls", "--show-status"}, {"frontier"}, {"claims"}, {"claims", "--show-status"}, {"sweep"},
 			{"show", "app#21", "--show-status"}, {"milestones"}, {"prs", "-S", "all"}, {"status"}} {
@@ -321,7 +320,7 @@ func TestNoColorRules(t *testing.T) {
 func TestLabelChipsInTable(t *testing.T) {
 	e := newEnv(t)
 	humanFixture(e)
-	e.write("app/labels.tsv", "kind:bug\td73a4a\tSomething is broken\narea:ui\t\t\n") // ui has no colour
+	e.putFile("app", fileLabels, "kind:bug\td73a4a\tSomething is broken\narea:ui\t\t\n") // ui has no colour
 	e.tty, e.width, e.extra["COLORTERM"] = true, 130, "truecolor"
 	out, _, _ := e.run("ls", "--repo", "app")
 	bugFg := TextOn(RGB{0xd7, 0x3a, 0x4a})
@@ -343,31 +342,24 @@ func TestPullWritesLabelColors(t *testing.T) {
 		"updatedAt": "2026-02-02T00:00:00Z", "id": "I5", "author": map[string]any{"login": "al"}, "milestone": nil,
 		"assignees": map[string]any{"nodes": []any{}}, "labels": map[string]any{"nodes": []any{map[string]any{"name": "bug"}}},
 		"comments": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{}}}
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		var req struct{ Query string }
-		json.Unmarshal([]byte(stdin), &req)
-		if strings.Contains(req.Query, "pullRequests(") && !strings.Contains(req.Query, "issues(") {
-			return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{
-				"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{}}}}}), nil
-		}
-		return mustJSON(map[string]any{"data": map[string]any{"repository": map[string]any{
-			"labels": map[string]any{"nodes": []any{
-				map[string]any{"name": "kind:bug", "color": "d73a4a", "description": "Something\tis broken"},
-				map[string]any{"name": "wontfix", "color": "ffffff", "description": nil}}},
-			"milestones": map[string]any{"nodes": []any{}},
-			"issues":     map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{issue}}}}}), nil
-	}
+	e.useMem().cannedPull(t, "example/app", map[string]any{
+		"labels": map[string]any{"nodes": []any{
+			map[string]any{"name": "kind:bug", "color": "d73a4a", "description": "Something\tis broken"},
+			map[string]any{"name": "wontfix", "color": "ffffff", "description": nil}}},
+		"milestones":   map[string]any{"nodes": []any{}},
+		"issues":       map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{issue}},
+		"pullRequests": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": []any{}}})
 	e.now = time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)
 	if _, errs, code := e.run("pull", "--repo", "app"); code != 0 {
 		t.Fatal(code, errs)
 	}
-	eq(t, "labels.tsv", e.read("app/labels.tsv"), "kind:bug\td73a4a\tSomething is broken\nwontfix\tffffff\t\n")
+	eq(t, "labels.tsv", e.getFile("app", fileLabels), "kind:bug\td73a4a\tSomething is broken\nwontfix\tffffff\t\n")
 	a := e.app()
 	if got := a.labelColors("app")["kind:bug"]; got != "d73a4a" {
 		t.Errorf("labelColors: %q", got)
 	}
 	// the existing files are untouched by the new one: the index still has its six columns
-	eq(t, "index", e.read("app/index.tsv"), "5\topen\t\tbug\t2026-02-02T00:00:00Z\tt\n")
+	eq(t, "index", e.getFile("app", fileIndex), "5\topen\t\tbug\t2026-02-02T00:00:00Z\tt\n")
 	// and a mirror that never fetched labels draws prefix colours
 	if got := a.labelColors("lib"); len(got) != 0 {
 		t.Errorf("lib: %v", got)

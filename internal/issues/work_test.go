@@ -128,7 +128,7 @@ func TestClosingRefs(t *testing.T) {
 
 // workFixture writes a mirror of invented data with one issue in every status. Time is 2026-03-01T12:00:00Z.
 func workFixture(e *env) {
-	e.write("app/index.tsv", strings.Join([]string{
+	e.putFile("app", fileIndex, strings.Join([]string{
 		"28\topen\t\t\t2026-02-28T00:00:00Z\tinvalid: other repo reference",
 		"27\topen\t\t\t2026-02-27T00:00:00Z\tbranch: only the branch name matches",
 		"26\topen\t\t\t2026-02-26T00:00:00Z\tplain: nobody on it",
@@ -140,20 +140,20 @@ func workFixture(e *env) {
 		"20\topen\t\tkind:bug,triage:ready\t2026-02-20T00:00:00Z\tready: triaged and waiting",
 		"",
 	}, "\n"))
-	e.write("app/lastpull", "1772366400\n")
-	e.write("app/prs.tsv", strings.Join([]string{
+	e.putFile("app", fileLastpull, "1772366400\n")
+	e.putFile("app", filePRs, strings.Join([]string{
 		"52\topen\t0\tdocs-52\ta\tmain\t2026-02-28T00:00:00Z\t\t\tlee\t2026-02-28T00:00:00Z\t\tdocs: other repo",
 		"51\topen\t0\tfix-27\tb\tmain\t2026-02-27T00:00:00Z\t\t\tlee\t2026-02-27T00:00:00Z\t\tbranch fix-27 touches things",
 		"50\topen\t0\tfeature-23\tc\tmain\t2026-02-23T00:00:00Z\t\t\tdana\t2026-02-23T00:00:00Z\t\treview: the feature",
 		"49\tmerged\t0\told\td\tmain\t2026-02-01T00:00:00Z\t2026-02-02T00:00:00Z\tf\tdana\t2026-02-02T00:00:00Z\t26\tmerged long ago",
 		"",
 	}, "\n"))
-	e.write("app/pr/50.md", "---\nnumber: 50\n---\n\nImplements it. Closes #23\n")
-	e.write("app/pr/52.md", "---\nnumber: 52\n---\n\nFixes lib#28 and mentions app#28 only in passing\n")
-	e.write("app/pr/51.md", "---\nnumber: 51\n---\n\nTouches #27 but does not close it\n")
-	e.write("claims/app-21.json", `{"agent": "sonnet-17", "pid": 0, "host": "box", "ts": 1772365740, "ttl": 7200}`+"\n") // 11m ago
-	e.write("claims/app-22.json", fmt.Sprintf(`{"agent": "haiku", "pid": 0, "host": "box", "ts": %d, "ttl": 7200}`+"\n", 1772366400-9660))
-	e.write("claims/app-24.json", `{"agent": "opus", "pid": 0, "host": "box", "ts": 1772362800, "ttl": 7200}`+"\n") // 1h ago, issue closed
+	e.putPR("app", 50, "---\nnumber: 50\n---\n\nImplements it. Closes #23\n")
+	e.putPR("app", 52, "---\nnumber: 52\n---\n\nFixes lib#28 and mentions app#28 only in passing\n")
+	e.putPR("app", 51, "---\nnumber: 51\n---\n\nTouches #27 but does not close it\n")
+	e.putClaim("app", "21", `{"agent": "sonnet-17", "pid": 0, "host": "box", "ts": 1772365740, "ttl": 7200}`+"\n") // 11m ago
+	e.putClaim("app", "22", fmt.Sprintf(`{"agent": "haiku", "pid": 0, "host": "box", "ts": %d, "ttl": 7200}`+"\n", 1772366400-9660))
+	e.putClaim("app", "24", `{"agent": "opus", "pid": 0, "host": "box", "ts": 1772362800, "ttl": 7200}`+"\n") // 1h ago, issue closed
 }
 
 func TestStatusEverywhereOnFixture(t *testing.T) {
@@ -264,8 +264,8 @@ func TestClaimsShowStatusWords(t *testing.T) {
 func TestSweep(t *testing.T) {
 	e := newEnv(t)
 	workFixture(e)
-	e.write("claims/app-23.json", `{"agent": "x", "pid": 0, "host": "box", "ts": 1772366000, "ttl": 7200}`+"\n") // fresh, issue in review
-	before := e.exists("claims/app-21.json") && e.exists("claims/app-22.json") && e.exists("claims/app-24.json")
+	e.putClaim("app", "23", `{"agent": "x", "pid": 0, "host": "box", "ts": 1772366000, "ttl": 7200}`+"\n") // fresh, issue in review
+	before := e.hasClaim("app", "21") && e.hasClaim("app", "22") && e.hasClaim("app", "24")
 	out, _, code := e.run("sweep")
 	if code != 0 || !before {
 		t.Fatal(code)
@@ -278,17 +278,17 @@ func TestSweep(t *testing.T) {
 	if strings.Contains(out, "app#21") || strings.Contains(out, "app#23") {
 		t.Errorf("a fresh claim on an open issue must never be listed:\n%s", out)
 	}
-	if !e.exists("claims/app-22.json") || !e.exists("claims/app-24.json") {
+	if !e.hasClaim("app", "22") || !e.hasClaim("app", "24") {
 		t.Fatal("dry run removed a claim")
 	}
 	out, _, _ = e.run("sweep", "--release")
 	if !strings.Contains(out, "released\tapp#22") || !strings.Contains(out, "released\tapp#24") {
 		t.Errorf("release output:\n%s", out)
 	}
-	if e.exists("claims/app-22.json") || e.exists("claims/app-24.json") {
+	if e.hasClaim("app", "22") || e.hasClaim("app", "24") {
 		t.Error("claims not removed")
 	}
-	if !e.exists("claims/app-21.json") || !e.exists("claims/app-23.json") {
+	if !e.hasClaim("app", "21") || !e.hasClaim("app", "23") {
 		t.Error("a fresh claim on an open issue was released")
 	}
 	if out, _, _ = e.run("sweep"); strings.TrimSpace(out) != "" {
@@ -305,7 +305,7 @@ func TestSweepDeadPid(t *testing.T) {
 	workFixture(e)
 	host, _ := os.Hostname()
 	// a fresh claim whose process is gone (pid 2^22+ is never alive) on this host is stale and swept
-	e.write("claims/app-26.json", fmt.Sprintf(`{"agent": "ghost", "pid": 4194000, "host": %q, "ts": 1772366300, "ttl": 7200}`+"\n", host))
+	e.putClaim("app", "26", fmt.Sprintf(`{"agent": "ghost", "pid": 4194000, "host": %q, "ts": 1772366300, "ttl": 7200}`+"\n", host))
 	e.extra["ISSUES_TEST_HOST"] = host
 	a := e.app()
 	a.Host = host
@@ -365,7 +365,7 @@ func TestLabelFlagAcceptsShownNames(t *testing.T) {
 		t.Errorf("no match is an empty list: %d %q", code, out)
 	}
 	// two labels end in "ready": the short name is ambiguous
-	e.write("app/index.tsv", "3\topen\t\ttriage:ready\t2026-02-12T09:00:00Z\tone\n2\topen\t\tstatus:ready\t2026-02-12T09:00:00Z\ttwo\n")
+	e.putFile("app", fileIndex, "3\topen\t\ttriage:ready\t2026-02-12T09:00:00Z\tone\n2\topen\t\tstatus:ready\t2026-02-12T09:00:00Z\ttwo\n")
 	out, errs, code := e.run("ls", "--repo", "app", "-L", "ready")
 	if code != 2 || out != "" || !strings.Contains(errs, "ambiguous") || !strings.Contains(errs, "status:ready, triage:ready") {
 		t.Errorf("ambiguous: %d %q %q", code, out, errs)

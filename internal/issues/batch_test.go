@@ -40,9 +40,6 @@ func TestPushBatchesIndependentWrites(t *testing.T) {
 			t.Fatalf("mutation %q missing from %s", want, got)
 		}
 	}
-	if n, _ := os.ReadDir(e.home + "/.outbox"); len(n) != 0 {
-		t.Logf("outbox dir has %d entries", len(n))
-	}
 	if left := e.app().loadOutbox(); len(left) != 0 {
 		t.Fatalf("%d ops left queued", len(left))
 	}
@@ -140,14 +137,11 @@ func TestMeasurePush(t *testing.T) {
 	for _, mode := range []string{"rest", "batch", "rest-independent", "batch-independent"} {
 		e := newEnv(t)
 		e.tick = true
-		e.gh.parallel = true
 		f := e.useMem()
 		f.delay = 100 * time.Millisecond
 		f.seed("example/app", 17, "2026-01-01T00:00:00Z")
 		f.addLabels("example/app", "x", "y")
 		if strings.HasPrefix(mode, "rest") {
-			e.mem = nil
-			e.gh.handler = (&latencyGH{}).handler(100*time.Millisecond, nil)
 			restPush(t)
 		} else {
 			pushBatch = 20
@@ -167,7 +161,7 @@ func TestMeasurePush(t *testing.T) {
 			e.run("close", ref)
 			e.run("label", "app#1", "--add", "y")
 		}
-		calls := func() int { return e.gh.callCount() + f.callCount() }
+		calls := f.callCount
 		c0, t0 := calls(), time.Now()
 		e.run("push")
 		t.Logf("MEASURE push 17 writes (%s): %d gh calls, %v", mode, calls()-c0, time.Since(t0).Round(10*time.Millisecond))

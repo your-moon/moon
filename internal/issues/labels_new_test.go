@@ -2,14 +2,13 @@ package issues
 
 import (
 	"strings"
-	"sync"
 	"testing"
 )
 
 func TestLabelsNewQueuesAndUnlocksOfflineUse(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/labels.tsv", "bug\t d73a4a\n")
+	e.putFile("app", fileLabels, "bug\t d73a4a\n")
 	_, errs, code := e.run("new", "--repo", "app", "--title", "t", "--body", "b", "-L", "area::sim")
 	if code == 0 || !strings.Contains(errs, "labels new") {
 		t.Fatalf("unknown label must be refused and name the command: %d %q", code, errs)
@@ -39,33 +38,19 @@ func TestLabelsNewQueuesAndUnlocksOfflineUse(t *testing.T) {
 func TestPushCreatesLabelBeforeItsUsers(t *testing.T) {
 	e := newEnv(t)
 	e.tick = true
-	e.write("app/labels.tsv", "bug\t d73a4a\n")
+	e.putFile("app", fileLabels, "bug\t d73a4a\n")
 	e.run("labels", "new", "area::sim", "--color", "1d76db", "-D", "simulator", "-R", "app")
 	e.run("new", "--repo", "app", "--title", "t", "--body", "b", "-L", "area::sim")
-	var mu sync.Mutex
-	var seq []string
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch {
-		case args[0] == "api":
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "label":
-			seq = append(seq, strings.Join(args, " "))
-		case args[0] == "issue" && args[1] == "create":
-			seq = append(seq, "create")
-			return "https://github.com/example/app/issues/9\n", nil
-		}
-		return "", nil
-	}
+	g := e.useMem()
 	if out, _, code := e.run("push"); code != 0 || out != "PUSH pushed=2 failed=0\n" {
 		t.Fatalf("%d %q", code, out)
 	}
-	want := "label create area::sim -R example/app --force --color 1d76db --description simulator|create"
-	if strings.Join(seq, "|") != want {
-		t.Fatalf("%q", strings.Join(seq, "|"))
+	eq(t, "label before its user", strings.Join(g.log, ","), "create-label area::sim,create")
+	if len(g.labelSpecs) != 1 || g.labelSpecs[0] != (LabelSpec{Name: "area::sim", Color: "1d76db", Description: "simulator"}) {
+		t.Fatalf("label: %+v", g.labelSpecs)
+	}
+	if len(g.created) != 1 || strings.Join(g.created[0].Labels, ",") != "area::sim" {
+		t.Fatalf("create: %+v", g.created)
 	}
 }
 

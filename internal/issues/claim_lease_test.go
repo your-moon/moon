@@ -79,7 +79,7 @@ func TestClaimTTLBadConfigIsRejected(t *testing.T) {
 func TestSweepLiveAndAgent(t *testing.T) {
 	e := newEnv(t)
 	workFixture(e)
-	e.write("claims/app-23.json", `{"agent": "x", "pid": 0, "host": "box", "ts": 1772366000, "ttl": 7200}`+"\n")
+	e.putClaim("app", "23", `{"agent": "x", "pid": 0, "host": "box", "ts": 1772366000, "ttl": 7200}`+"\n")
 
 	out, _, _ := e.run("sweep")
 	if strings.Contains(out, "app#21") || strings.Contains(out, "app#23") {
@@ -95,7 +95,7 @@ func TestSweepLiveAndAgent(t *testing.T) {
 			t.Errorf("--live dry run lacks %q:\n%s", want, out)
 		}
 	}
-	if !e.exists("claims/app-21.json") || !e.exists("claims/app-23.json") {
+	if !e.hasClaim("app", "21") || !e.hasClaim("app", "23") {
 		t.Fatal("a dry run removed a claim")
 	}
 
@@ -103,10 +103,10 @@ func TestSweepLiveAndAgent(t *testing.T) {
 	if !strings.Contains(out, "released\tapp#21") || strings.Contains(out, "app#23") || strings.Contains(out, "app#22") {
 		t.Errorf("--agent must keep only that holder's claims:\n%s", out)
 	}
-	if e.exists("claims/app-21.json") {
+	if e.hasClaim("app", "21") {
 		t.Error("the named agent's live claim was not released")
 	}
-	if !e.exists("claims/app-23.json") || !e.exists("claims/app-22.json") || !e.exists("claims/app-24.json") {
+	if !e.hasClaim("app", "23") || !e.hasClaim("app", "22") || !e.hasClaim("app", "24") {
 		t.Error("another holder's claim was removed")
 	}
 }

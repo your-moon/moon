@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,14 +49,48 @@ type mirror struct {
 	dir  string
 	cfg  string
 	sess *issues.Session
+	st   issues.Mirror // the mirror's collections: tests seed and read through these, never by path
 }
 
-func (mi *mirror) write(rel, content string) {
-	p := filepath.Join(mi.dir, "mirror", rel)
-	os.MkdirAll(filepath.Dir(p), 0o755)
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+func (mi *mirror) must(err error) {
+	mi.t.Helper()
+	if err != nil {
 		mi.t.Fatal(err)
 	}
+}
+
+func (mi *mirror) putIndex(alias, text string) {
+	mi.t.Helper()
+	_, err := mi.st.Issues.Write(alias, issues.FileIndex, text)
+	mi.must(err)
+}
+func (mi *mirror) putLastpull(alias, text string) {
+	mi.t.Helper()
+	_, err := mi.st.Issues.Write(alias, issues.FileLastpull, text)
+	mi.must(err)
+}
+func (mi *mirror) putPRs(alias, text string) {
+	mi.t.Helper()
+	_, err := mi.st.Issues.Write(alias, issues.FilePRs, text)
+	mi.must(err)
+}
+func (mi *mirror) putMilestones(alias, text string) {
+	mi.t.Helper()
+	_, err := mi.st.Issues.Write(alias, issues.FileMilestones, text)
+	mi.must(err)
+}
+
+// queueOp puts one op, as its stored JSON, in the outbox under key; queuedOps returns every queued op's stored JSON.
+func (mi *mirror) queueOp(key, text string) { mi.t.Helper(); mi.must(mi.st.Outbox.Put(key, text)) }
+
+func (mi *mirror) queuedOps() []string {
+	var out []string
+	for _, k := range mi.st.Outbox.List() {
+		b, err := mi.st.Outbox.Get(k)
+		mi.must(err)
+		out = append(out, string(b))
+	}
+	return out
 }
 
 func (mi *mirror) addIssues(alias string, items []fx) {
@@ -68,11 +103,11 @@ func (mi *mirror) addIssues(alias string, items []fx) {
 				ls = append(ls, fmt.Sprintf("%q", l))
 			}
 		}
-		mi.write(fmt.Sprintf("%s/%d.md", alias, it.num), fmt.Sprintf("---\nnumber: %d\ntitle: %q\nstate: %q\nstate_reason: null\nlabels: [%s]\nmilestone: %s\nassignees: []\nauthor: \"sam\"\ncreated_at: %q\nupdated_at: %q\nurl: \"https://example.invalid/%d\"\n---\n\n%s\n",
-			it.num, it.name, it.state, strings.Join(ls, ", "), msJSON(it.ms), it.created, it.updated, it.num, it.body))
+		mi.must(mi.st.Issues.Put(alias, strconv.Itoa(it.num), fmt.Sprintf("---\nnumber: %d\ntitle: %q\nstate: %q\nstate_reason: null\nlabels: [%s]\nmilestone: %s\nassignees: []\nauthor: \"sam\"\ncreated_at: %q\nupdated_at: %q\nurl: \"https://example.invalid/%d\"\n---\n\n%s\n",
+			it.num, it.name, it.state, strings.Join(ls, ", "), msJSON(it.ms), it.created, it.updated, it.num, it.body)))
 	}
-	mi.write(alias+"/index.tsv", idx.String())
-	mi.write(alias+"/lastpull", fmt.Sprint(fixedNow.Unix()-5*60)+"\n")
+	mi.putIndex(alias, idx.String())
+	mi.putLastpull(alias, fmt.Sprint(fixedNow.Unix()-5*60)+"\n")
 }
 
 func msJSON(ms string) string {
@@ -92,7 +127,7 @@ func newMirror(t *testing.T, items []fx, aliases ...string) *mirror {
 	for _, a := range aliases {
 		cfg += fmt.Sprintf("[repos.%s]\ngithub = \"example/%s\"\n", a, a)
 	}
-	mi := &mirror{t: t, dir: d, cfg: filepath.Join(d, "moon.toml")}
+	mi := &mirror{t: t, dir: d, cfg: filepath.Join(d, "moon.toml"), st: issues.OpenMirror(filepath.Join(d, "mirror"))}
 	os.WriteFile(mi.cfg, []byte(cfg), 0o644)
 	if items != nil {
 		for _, a := range aliases {
@@ -114,19 +149,10 @@ func (mi *mirror) open() {
 
 func (mi *mirror) claim(ref, agent string, tsAgo, ttl int) {
 	short, id, _ := strings.Cut(ref, "#")
-	mi.write(fmt.Sprintf("claims/%s-%s.json", short, id), fmt.Sprintf(`{"agent": %q, "pid": 0, "host": "box", "ts": %d, "ttl": %d}`, agent, fixedNow.Unix()-int64(tsAgo), ttl))
+	mi.must(mi.st.Claims.Put(mi.st.Claims.Key(short, id), fmt.Sprintf(`{"agent": %q, "pid": 0, "host": "box", "ts": %d, "ttl": %d}`, agent, fixedNow.Unix()-int64(tsAgo), ttl)))
 }
 
-func (mi *mirror) outbox() int {
-	ents, _ := os.ReadDir(filepath.Join(mi.dir, "mirror", "outbox"))
-	n := 0
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".json") {
-			n++
-		}
-	}
-	return n
-}
+func (mi *mirror) outbox() int { return len(mi.st.Outbox.List()) }
 
 func (mi *mirror) model(w, h int) Model {
 	m := New(mi.sess, Options{Agent: "me", MirrorDir: "mirror"})

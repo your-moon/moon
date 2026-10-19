@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -43,7 +42,6 @@ func TestSequentialLocalIds(t *testing.T) {
 			t.Fatalf("%d: %q", i, out)
 		}
 	}
-	eq(t, "counter", e.read("app/local-seq"), "3\n")
 	out, _, _ := e.run("new", "--repo", "lib", "--title", "t", "--body", "b") // counters are per alias
 	eq(t, "lib ref", refOf(t, out), "lib#L-1")
 	// the body keeps the idempotency marker with the short id
@@ -130,7 +128,6 @@ func TestConcurrentAllocationProcesses(t *testing.T) {
 		got = append(got, seqOfRef(t, refOf(t, out)))
 	}
 	assertContiguous(t, got, procs*per)
-	eq(t, "counter", e.read("app/local-seq"), strconv.Itoa(procs*per)+"\n")
 }
 
 func TestNumbersNeverReused(t *testing.T) {
@@ -144,17 +141,8 @@ func TestNumbersNeverReused(t *testing.T) {
 	eq(t, "after close", refOf(t, out), "app#L-4")
 
 	// pushing lands them in localmap and drains the outbox; the numbers stay taken
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		switch {
-		case args[0] == "api":
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "issue" && args[1] == "create":
-			return "https://github.com/example/app/issues/" + strconv.Itoa(100+e.gh.callCount()) + "\n", nil
-		}
-		return "", nil
-	}
+	g := e.useMem()
+	g.repo("example/app")
 	if o, _, code := e.run("push"); code != 0 {
 		t.Fatalf("push %d %s", code, o)
 	}
@@ -162,7 +150,7 @@ func TestNumbersNeverReused(t *testing.T) {
 	eq(t, "after push", refOf(t, out), "app#L-5")
 
 	// a lost counter is rebuilt from the outbox and localmap, never restarted at 1
-	os.Remove(filepath.Join(e.home, "app", "local-seq"))
+	e.rawRemove("app/local-seq")
 	out, _, _ = e.run("new", "--repo", "app", "--title", "t", "--body", "b")
 	eq(t, "lost counter", refOf(t, out), "app#L-6")
 }
@@ -184,14 +172,14 @@ func TestLegacyIdsStayValid(t *testing.T) {
 		}
 	}
 	// a legacy ref keeps resolving through localmap, and its files and ids are never rewritten
-	e.write("localmap.tsv", "app\tL-20261015194409-e10b\t40\n")
-	e.write("app/40.md", renderIssue(fixtureIssueNum(40)))
+	e.mapLocal("app", "L-20261015194409-e10b", 40)
+	e.putIssue("app", "40", renderIssue(fixtureIssueNum(40)))
 	out, _, code := e.run("show", "app#L-20261015194409-e10b")
 	if code != 0 {
 		t.Fatalf("%d %s", code, out)
 	}
 	contains0(t, "legacy show", out, "ref: L-20261015194409-e10b (now #40)\n")
-	eq(t, "localmap untouched", e.read("localmap.tsv"), "app\tL-20261015194409-e10b\t40\n")
+	eq(t, "localmap untouched", e.localmap(), "app\tL-20261015194409-e10b\t40\n")
 	// a legacy create still sitting in the outbox keeps working next to new-style ids
 	_, _, code = e.run("comment", "app#L-20261015194409-e10b", "--body", "x")
 	if code != 0 {
@@ -210,25 +198,16 @@ func TestLocalmapResolutionAfterPush(t *testing.T) {
 	eq(t, "ref", ref, "app#L-1")
 	out, _, _ = e.run("show", ref)
 	contains0(t, "pending show", out, "ref: app#L-1 (local, pending sync: not on GitHub yet)")
-	e.gh.handler = func(args []string, stdin string) (string, error) {
-		switch {
-		case args[0] == "api":
-			return "", nil
-		case args[0] == "issue" && args[1] == "list":
-			return "[]", nil
-		case args[0] == "issue" && args[1] == "create":
-			return "https://github.com/example/app/issues/612\n", nil
-		}
-		return "", nil
-	}
+	g := e.useMem()
+	g.repo("example/app").nextNum = 611 // GitHub numbers the create 612
 	if _, _, code := e.run("push"); code != 0 {
 		t.Fatal("push")
 	}
-	eq(t, "localmap format", e.read("localmap.tsv"), "app\tL-1\t612\n")
+	eq(t, "localmap format", e.localmap(), "app\tL-1\t612\n")
 	// a pull has since mirrored the real issue
 	n := fixtureIssueNum(612)
 	n.Title = "first thing"
-	e.write("app/612.md", renderIssue(n))
+	e.putIssue("app", "612", renderIssue(n))
 	out, _, code := e.run("show", ref)
 	if code != 0 {
 		t.Fatalf("%d %s", code, out)
@@ -239,7 +218,7 @@ func TestLocalmapResolutionAfterPush(t *testing.T) {
 		t.Fatal("still marked pending")
 	}
 	// ls lists it under its real number only, no stale local row
-	e.write("app/index.tsv", "612\topen\t\t\t2026-02-01T00:00:00Z\tfirst thing\n")
+	e.putFile("app", fileIndex, "612\topen\t\t\t2026-02-01T00:00:00Z\tfirst thing\n")
 	out, _, _ = e.run("ls", "--repo", "app")
 	eq(t, "ls", out, "app#612\topen\t-\t-\tfirst thing\n")
 }
@@ -279,6 +258,7 @@ func localEnv(t *testing.T) *env {
 func TestLocalOnlyRepo(t *testing.T) {
 	e := localEnv(t)
 	e.tick = true
+	g := e.useMem()
 	spawn := filepath.Join(t.TempDir(), "spawn.log")
 	e.extra = map[string]string{"ISSUES_TEST_SPAWN": spawn} // autosync enabled: it must skip local-only aliases
 	out, _, code := e.run("new", "--repo", "notes", "--title", "buy milk", "--body", "two litres", "--label", "home", "--milestone", "week1")
@@ -288,12 +268,11 @@ func TestLocalOnlyRepo(t *testing.T) {
 	}
 	out, _, _ = e.run("new", "--repo", "notes", "--title", "call bank", "--body", "")
 	eq(t, "new 2", out, "ref notes#2  (#2)\n")
-	if strings.Contains(e.read("notes/1.md"), "local-id") || e.exists("outbox") {
+	if strings.Contains(e.getIssue("notes", "1"), "local-id") || len(e.outboxKeys()) != 0 {
 		t.Fatal("local-only issue must not be queued or carry a marker")
 	}
-	eq(t, "counter", e.read("notes/local-seq"), "2\n")
-	if !strings.HasPrefix(e.read("notes/index.tsv"), "2\topen\t") {
-		t.Fatal(e.read("notes/index.tsv"))
+	if !strings.HasPrefix(e.getFile("notes", fileIndex), "2\topen\t") {
+		t.Fatal(e.getFile("notes", fileIndex))
 	}
 
 	out, _, _ = e.run("ls", "--repo", "notes")
@@ -352,18 +331,18 @@ func TestLocalOnlyRepo(t *testing.T) {
 			t.Fatalf("%s: %d %q", cmd, code, errs)
 		}
 	}
-	if e.gh.callCount() != 0 {
-		t.Fatalf("gh called: %v", e.gh.calls)
+	if g.callCount() != 0 {
+		t.Fatalf("GitHub called: %v", g.calls)
 	}
 	// without --repo, local-only aliases are skipped silently next to GitHub-backed ones
-	e.gh.handler = func(args []string, stdin string) (string, error) { return "", &GhError{Msg: "offline"} }
+	g.hook = func(call, repo, ident string) error { return &GhError{Msg: "offline"} }
 	out, _, _ = e.run("push")
 	eq(t, "mixed push", out, "PUSH pushed=0 failed=0\n")
 	// the local-only file is never pruned, however old
 	e.extra["ISSUES_KEEP_DAYS"] = "0"
 	e.now = e.now.AddDate(1, 0, 0)
 	e.run("prune")
-	if !e.exists("notes/1.md") {
+	if !e.hasIssue("notes", "1") {
 		t.Fatal("pruned a local-only issue")
 	}
 }

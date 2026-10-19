@@ -11,7 +11,7 @@ import (
 // humanFixture writes a small mirror of invented data. Ties are deliberate: #8 and #9 share an update time,
 // and #4 and #5 share a title apart from case.
 func humanFixture(e *env) {
-	e.write("app/index.tsv", strings.Join([]string{
+	e.putFile("app", fileIndex, strings.Join([]string{
 		"12\topen\tv1.0\tkind:bug,area:ui\t2026-02-10T09:00:00Z\tlogin: button does nothing on Safari when the session cookie has expired and the user retries",
 		"9\topen\t\tkind:feature\t2026-02-05T09:00:00Z\texport: add CSV download",
 		"8\topen\tv1.0\tarea:docs,kind:cleanup\t2026-02-05T09:00:00Z\tdocs: quickstart mentions a removed flag",
@@ -19,17 +19,17 @@ func humanFixture(e *env) {
 		"4\topen\t\t\t2026-01-15T09:00:00Z\tsearch: slow on big projects",
 		"",
 	}, "\n"))
-	e.write("app/lastpull", "1772366400\n") // 2026-03-01T12:00:00Z minus 0s
-	e.write("app/milestones.tsv", "v1.0\topen\t3\t4\t2026-04-01T00:00:00Z\nv0.9\tclosed\t10\t0\t\n")
-	e.write("lib/index.tsv", "3\topen\t\tkind:bug\t2026-02-12T09:00:00Z\tparser: crashes on empty input\n")
-	e.write("lib/lastpull", "1772366400\n")
-	e.write("app/prs.tsv", strings.Join([]string{
+	e.putFile("app", fileLastpull, "1772366400\n") // 2026-03-01T12:00:00Z minus 0s
+	e.putFile("app", fileMilestones, "v1.0\topen\t3\t4\t2026-04-01T00:00:00Z\nv0.9\tclosed\t10\t0\t\n")
+	e.putFile("lib", fileIndex, "3\topen\t\tkind:bug\t2026-02-12T09:00:00Z\tparser: crashes on empty input\n")
+	e.putFile("lib", fileLastpull, "1772366400\n")
+	e.putFile("app", filePRs, strings.Join([]string{
 		"31\topen\t0\tfix-login\tabc\tmain\t2026-02-09T00:00:00Z\t\t\tdana\t2026-02-10T00:00:00Z\t12\tlogin: handle expired cookie",
 		"30\tmerged\t0\tcsv-export\tdef\tmain\t2026-02-01T00:00:00Z\t2026-02-06T00:00:00Z\tfff\tdana\t2026-02-06T00:00:00Z\t9\texport: CSV download",
 		"29\topen\t1\twip-search\tghi\tmain\t2026-01-30T00:00:00Z\t\t\tlee\t2026-02-06T00:00:00Z\t\tsearch: index tuning",
 		"",
 	}, "\n"))
-	e.write("claims/app-12.json", `{"agent": "alice", "pid": 0, "host": "box", "ts": 1772365200, "ttl": 7200}`+"\n") // claimed 20m ago
+	e.putClaim("app", "12", `{"agent": "alice", "pid": 0, "host": "box", "ts": 1772365200, "ttl": 7200}`+"\n") // claimed 20m ago
 }
 
 func refsOf(out string) []string {
@@ -209,8 +209,8 @@ func TestDefaultLimitOnTTY(t *testing.T) {
 	for i := 40; i >= 1; i-- {
 		fmt.Fprintf(&b, "%d\topen\t\t\t2026-02-01T00:00:00Z\tissue number %d\n", i, i)
 	}
-	e.write("app/index.tsv", b.String())
-	e.write("app/lastpull", "1772366400\n")
+	e.putFile("app", fileIndex, b.String())
+	e.putFile("app", fileLastpull, "1772366400\n")
 	if out, _, _ := e.run("ls", "--repo", "app"); len(refsOf(out)) != 40 {
 		t.Errorf("piped default must be unlimited, got %d", len(refsOf(out)))
 	}
@@ -253,14 +253,14 @@ func TestJSONFormat(t *testing.T) {
 
 func TestShowPretty(t *testing.T) {
 	e := newEnv(t)
-	e.write("app/index.tsv", "7\topen\tv1.0\tkind:bug\t2026-02-01T00:00:00Z\twidget: renders blank\n")
+	e.putFile("app", fileIndex, "7\topen\tv1.0\tkind:bug\t2026-02-01T00:00:00Z\twidget: renders blank\n")
 	n := fixtureIssue()
 	n.Body = "This sentence is long enough that it has to be wrapped when the terminal is only fifty columns wide, which it is.\n\n```\ncode lines are never wrapped even when they are far longer than the terminal width allows\n```\n"
 	n.Milestone = &struct {
 		Title string `json:"title"`
 	}{"v1.0"}
 	n.Title = "widget: renders blank"
-	e.write("app/7.md", renderIssue(n))
+	e.putIssue("app", "7", renderIssue(n))
 	plainOut, _, _ := e.run("show", "app#7")
 	e.tty, e.width, e.extra["NO_COLOR"] = true, 50, "1"
 	out, _, code := e.run("show", "app#7")
@@ -316,7 +316,7 @@ func TestHelp(t *testing.T) {
 		t.Errorf("help: %d", code)
 	}
 	// a value that happens to be "-h" is not a help request
-	e.write("app/index.tsv", "")
+	e.putFile("app", fileIndex, "")
 	if out, _, code := e.run("ls", "-q", "-h"); code != 0 || strings.Contains(out, "usage:") {
 		t.Errorf("-q -h: %d %q", code, out)
 	}
@@ -442,7 +442,7 @@ func TestRenderHelpers(t *testing.T) {
 
 func msFixture(e *env) {
 	humanFixture(e)
-	e.write("app/milestones.tsv", strings.Join([]string{
+	e.putFile("app", fileMilestones, strings.Join([]string{
 		"v1.0\topen\t3\t4\t2026-04-01T00:00:00Z",
 		"v1.1-beta\topen\t0\t0\t",
 		"V2.0\topen\t249\t1\t2026-02-01T00:00:00Z",
@@ -558,7 +558,7 @@ func TestMilestonesSortFilter(t *testing.T) {
 func TestMilestoneMatching(t *testing.T) {
 	e := newEnv(t)
 	msFixture(e)
-	e.write("app/index.tsv", "12\topen\tv1.0\t\t2026-02-10T09:00:00Z\tone\n9\topen\tV2.0\t\t2026-02-05T09:00:00Z\ttwo\n8\topen\tv1.2\t\t2026-02-05T09:00:00Z\tthree\n")
+	e.putFile("app", fileIndex, "12\topen\tv1.0\t\t2026-02-10T09:00:00Z\tone\n9\topen\tV2.0\t\t2026-02-05T09:00:00Z\ttwo\n8\topen\tv1.2\t\t2026-02-05T09:00:00Z\tthree\n")
 	for typed, want := range map[string]string{"v1.0": "app#12", "V1.0": "app#12", "v2": "app#9", "v1.2": "app#8"} {
 		out, errs, code := e.run("ls", "--repo", "app", "--milestone", typed)
 		if code != 0 || strings.Join(refsOf(out), " ") != want {
@@ -616,7 +616,7 @@ func TestMilestonesShow(t *testing.T) {
 func TestShortFlagsEqualLong(t *testing.T) {
 	e := newEnv(t)
 	msFixture(e)
-	e.write("app/index.tsv", "12\topen\tv1.0\tkind:bug\t2026-02-10T09:00:00Z\tone\n9\topen\tv1.0\tkind:feature\t2026-02-05T09:00:00Z\ttwo\n8\topen\t\tkind:bug\t2026-02-07T09:00:00Z\tthree\n")
+	e.putFile("app", fileIndex, "12\topen\tv1.0\tkind:bug\t2026-02-10T09:00:00Z\tone\n9\topen\tv1.0\tkind:feature\t2026-02-05T09:00:00Z\ttwo\n8\topen\t\tkind:bug\t2026-02-07T09:00:00Z\tthree\n")
 	for _, c := range []struct{ short, long []string }{
 		{[]string{"ls", "-s", "updated", "-S", "all"}, []string{"ls", "--sort", "updated", "--state", "all"}},
 		{[]string{"ls", "-l", "2"}, []string{"ls", "--limit", "2"}},
@@ -666,7 +666,11 @@ func TestShortFlagsEqualLong(t *testing.T) {
 	if _, errs, code := e.run("new", "-R", "app", "--title", "t", "--body", "b", "-L", "bug", "-L", "ui"); code != 0 {
 		t.Errorf("new -L -L: %d %q", code, errs)
 	}
-	if got := e.read("outbox/" + func() string { ents, _ := os.ReadDir(filepath.Join(e.home, "outbox")); return ents[0].Name() }()); !strings.Contains(got, `"bug", "ui"`) {
+	keys := e.outboxKeys()
+	if len(keys) != 1 {
+		t.Fatalf("queued: %v", keys)
+	}
+	if got := e.outboxText(keys[0]); !strings.Contains(got, `"bug", "ui"`) {
 		t.Errorf("labels not repeated: %s", got)
 	}
 }
