@@ -21,7 +21,9 @@ func TestActionAllows(t *testing.T) {
 		{"claim", Item{State: "open", Claim: live("bob")}, "me", false},
 		{"claim", Item{State: "closed"}, "me", false},
 		{"release", Item{State: "open"}, "me", false},
-		{"release", Item{State: "open", Claim: live("bob")}, "me", true},
+		{"release", Item{State: "open", Claim: live("bob")}, "me", false}, // never forced
+		{"release", Item{State: "open", Claim: live("me")}, "me", true},
+		{"release", Item{State: "open", Claim: stale}, "me", false},
 		{"close", Item{State: "open"}, "me", true},
 		{"close", Item{State: "closed"}, "me", false},
 		{"reopen", Item{State: "closed"}, "me", true},

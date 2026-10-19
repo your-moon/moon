@@ -17,7 +17,8 @@ type Word struct {
 	Start, End int
 }
 
-// SplitWords splits text like a shell would (quotes, backslash). When the text ends in a space, or is empty,
+// SplitWords splits text like a shell would (quotes, backslash; inside double quotes \" \\ \$ and \` are
+// unescaped). It is the one splitter of the shell completion path and the dashboard's lines. When the text ends in a space, or is empty,
 // the last word is empty and sits at the end. The returned quote is the one left open in the last word.
 func SplitWords(text string) (words []Word, quote byte) {
 	var cur strings.Builder
@@ -35,7 +36,7 @@ func SplitWords(text string) (words []Word, quote byte) {
 			switch {
 			case c == '"':
 				quote = 0
-			case c == '\\' && i+1 < len(text) && strings.IndexByte("\"\\", text[i+1]) >= 0:
+			case c == '\\' && i+1 < len(text) && strings.IndexByte("\"\\$`", text[i+1]) >= 0:
 				i++
 				cur.WriteByte(text[i])
 			default:

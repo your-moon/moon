@@ -145,7 +145,7 @@ func TestColonClaimOffersOnlyUnclaimed(t *testing.T) {
 	m = press(typed(press(m, ":"), "claim erp#"), "tab")
 	eq(t, "claimable: open and not held, erp#2 is held", cands(m), "erp#510 erp#51 erp#50 erp#3")
 	m = press(typed(press(m, "esc", "esc", ":"), "release erp#"), "tab")
-	eq(t, "releasable: only claimed", m.input.Value(), "release erp#2")
+	eq(t, "releasable: robin holds erp#2, nothing is mine", m.input.Value(), "release erp#")
 	m = press(typed(press(m, "esc", ":"), "reopen "), "tab")
 	eq(t, "reopen: only closed", m.input.Value(), "reopen erp#52")
 	m = press(typed(press(m, "esc", ":"), "cl"), "tab")

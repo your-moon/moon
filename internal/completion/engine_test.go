@@ -165,7 +165,7 @@ func TestRefs(t *testing.T) {
 func TestClaimedAndUnclaimedFilters(t *testing.T) {
 	f := newFixture(t, standard)
 	want(t, "claim: open and unclaimed", list(f.complete("issues", "claim", "")), "erp#51 erp#50 erp#3 web#3")
-	want(t, "release: claimed", list(f.complete("issues", "release", "")), "erp#510 erp#2")
+	want(t, "release: no claim is the unknown agent's", list(f.complete("issues", "release", "")), "")
 	want(t, "reopen: closed", list(f.complete("issues", "reopen", "")), "erp#52 erp#1")
 	want(t, "close: open", list(f.complete("issues", "close", "")), "erp#510 erp#51 erp#50 erp#2 erp#3 web#3")
 	want(t, "claim erp#5", list(f.complete("issues", "claim", "erp#5")), "erp#51 erp#50")

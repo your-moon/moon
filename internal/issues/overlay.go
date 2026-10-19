@@ -9,9 +9,13 @@ import "strings"
 // overlayOps is the queued writes that count for reads: all of them, in queue order, except the ones that
 // failed their last send. A failed op stays in the outbox for repair (`outbox ls|edit|drop`) but is not shown
 // as done.
-func (a *App) overlayOps() []*Op {
+func (a *App) overlayOps() []*Op { return effectiveOps(a.loadOutbox()) }
+
+// effectiveOps is ops without the ones that failed their last send: the writes every reader of issue state
+// (ls, show, show --json, the TUI) applies. Raw loadOutbox stays for the outbox commands, push and counts.
+func effectiveOps(ops []*Op) []*Op {
 	var out []*Op
-	for _, op := range a.loadOutbox() {
+	for _, op := range ops {
 		if op.LastError == nil {
 			out = append(out, op)
 		}

@@ -199,7 +199,7 @@ func (a *App) cmdShow(o *Opts) error {
 			claim += "  [STALE]"
 		}
 	}
-	status := a.showStatus(short, ident, ref, pending)
+	status := a.showStatus(short, ident, ref, effectiveOps(pending))
 	if !pretty || isLocalIdent(ident) {
 		a.printf("claim: %s\n", claim)
 		if pretty || o.B["show-status"] {
@@ -220,7 +220,7 @@ func (a *App) cmdShow(o *Opts) error {
 		}
 		t := nw.Args
 		e := &eff{title: argStr(t, "title"), state: "open", labels: argList(t, "labels"), milestone: argStr(t, "milestone"), body: argStr(t, "body")}
-		if err := applyOps(e, pending); err != nil {
+		if err := applyOps(e, effectiveOps(pending)); err != nil {
 			return err
 		}
 		a.printf("ref: %s (local, pending sync: not on GitHub yet)\ntitle: %s\nstate: %s\nlabels: %s\nmilestone: %s\n\n%s\n",
@@ -271,7 +271,7 @@ func (a *App) cmdShow(o *Opts) error {
 			h = map[string]any{}
 		}
 		e := &eff{title: hStr(h, "title"), state: hStr(h, "state"), labels: hList(h, "labels"), milestone: hStr(h, "milestone")}
-		if err := applyOps(e, pending); err != nil {
+		if err := applyOps(e, effectiveOps(pending)); err != nil {
 			return err
 		}
 		if pretty {

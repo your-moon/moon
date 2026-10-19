@@ -52,7 +52,7 @@ func Refs(s Source, cmd, typed string, aliases []string) []Candidate {
 			}
 		}
 	} else {
-		keep := RefFilter(cmd, agentOf(s))
+		keep := RefFilter(cmd, s.Agent())
 		for _, it := range s.Items() {
 			if inAliases(it.Alias, aliases) && strings.HasPrefix(it.Ref, typed) && keep(it) {
 				rows = append(rows, row{it.Ref, it.Title, it.Updated, it.Num})

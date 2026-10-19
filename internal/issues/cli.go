@@ -506,17 +506,7 @@ func Main(args []string, e Env) int {
 	if dir != "" {
 		home, _ = filepath.Abs(dir)
 	}
-	host, _ := os.Hostname()
-	gh := e.GH
-	if gh == nil {
-		gh = NewExecGH(e.Getenv("ISSUES_GH"))
-	}
-	git := e.GitRemote
-	if git == nil {
-		git = GitRemoteOrigin
-	}
-	a := &App{Cfg: cfg, Cwd: e.Cwd, GitRemote: git, ConfigSource: configSource(cfgPath, e.Cwd, e.Getenv, cfg), Home: home, GH: gh, Out: e.Out, Err: e.Err, Stdin: e.Stdin, Now: e.Now, Host: host, Environ: e.Getenv,
-		Repos: cfg.Repos, SpawnSync: spawnSync, TTY: e.TTY, Width: e.Width}
+	a := newApp(cfg, cfgPath, home, e)
 	if a.Width <= 0 {
 		a.Width = defaultWidth
 	}
@@ -526,7 +516,7 @@ func Main(args []string, e Env) int {
 		return 2
 	}
 	if e.Cwd != "" {
-		a.Scope = ResolveScope(e.Cwd, cfg, git, ScopeOpts{Flags: o.L["repo"], All: o.B["all"], Home: e.Getenv("HOME")})
+		a.Scope = ResolveScope(e.Cwd, cfg, a.GitRemote, ScopeOpts{Flags: o.L["repo"], All: o.B["all"], Home: e.Getenv("HOME")})
 	}
 	delete(o.S, "repo") // from here on the scope is the only source of the repo filter
 	if sp.takesRef() {
@@ -570,4 +560,20 @@ func isMsSub(w string) bool {
 		return true
 	}
 	return false
+}
+
+// newApp is the one App constructor, used by Main and NewSessionScoped so the CLI and the TUI read the same
+// config, GitHub client (ISSUES_GH), clock and environment.
+func newApp(cfg *Config, cfgPath, home string, e Env) *App {
+	host, _ := os.Hostname()
+	gh := e.GH
+	if gh == nil {
+		gh = NewExecGH(e.Getenv("ISSUES_GH"))
+	}
+	remote := e.GitRemote
+	if remote == nil {
+		remote = GitRemoteOrigin
+	}
+	return &App{Cfg: cfg, Cwd: e.Cwd, GitRemote: remote, ConfigSource: configSource(cfgPath, e.Cwd, e.Getenv, cfg), Home: home, GH: gh, Out: e.Out, Err: e.Err, Stdin: e.Stdin, Now: e.Now, Host: host, Environ: e.Getenv,
+		Repos: cfg.Repos, SpawnSync: spawnSync, TTY: e.TTY, Width: e.Width}
 }

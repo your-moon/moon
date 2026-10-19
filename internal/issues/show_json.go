@@ -65,7 +65,7 @@ func (a *App) showJSON(ref, short, ident string) error {
 	}
 	var pending []*Op
 	for _, op := range ops {
-		if op.Op != "new" && op.Ref == ref {
+		if op.Op != "new" && op.Ref == ref && op.LastError == nil {
 			pending = append(pending, op)
 		}
 	}

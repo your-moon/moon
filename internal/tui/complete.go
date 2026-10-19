@@ -20,6 +20,7 @@ func (s modelSource) Aliases() []string                 { return s.m.snap.Aliase
 func (s modelSource) Items() []issues.Item              { return s.m.snap.Items }
 func (s modelSource) Milestones() []issues.MilestoneRow { return s.m.st.Milestones() }
 func (s modelSource) PRs() []issues.PRItem              { return nil }
+func (s modelSource) Agent() string                     { return s.m.opt.Agent }
 
 // Scope is the repo the list is on (the project's repo unless a or tab changed it), so tab completion of refs,
 // labels and milestones offers that repo's; empty means every repo.

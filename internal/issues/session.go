@@ -3,7 +3,6 @@ package issues
 import (
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -91,21 +90,18 @@ func NewSessionScoped(cfgPath, dir string, e Env, opt ScopeOpts) (*Session, erro
 	if dir != "" {
 		home, _ = filepath.Abs(dir)
 	}
-	host, _ := os.Hostname()
-	now := e.Now
-	if now == nil {
-		now = time.Now
+	if e.Now == nil {
+		e.Now = time.Now
 	}
-	a := &App{Home: home, GH: NewExecGH(""), Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
-		Environ: e.Getenv, Repos: cfg.Repos, SpawnSync: spawnSync}
-	git := e.GitRemote
-	if git == nil {
-		git = GitRemoteOrigin
-	}
+	e.Out, e.Err, e.Stdin = io.Discard, io.Discard, strings.NewReader("")
+	a := newApp(cfg, p, home, e)
+	remote := a.GitRemote
 	if opt.Home == "" {
 		opt.Home = e.Getenv("HOME")
 	}
-	return &Session{app: a, created: map[string]string{}, scope: ResolveScope(e.Cwd, cfg, git, opt), pal: NewPalette(DetectTheme(e.Getenv, cfg.Colors.Theme), cfg.Colors.Overrides)}, nil
+	scope := ResolveScope(e.Cwd, cfg, remote, opt)
+	a.Scope = scope
+	return &Session{app: a, created: map[string]string{}, scope: scope, pal: NewPalette(DetectTheme(e.Getenv, cfg.Colors.Theme), cfg.Colors.Overrides)}, nil
 }
 
 // Scope is the repos the dashboard opens on: the project the working directory belongs to, or every repo.
@@ -157,8 +153,9 @@ func (s *Session) load(withCreated bool) Snapshot {
 	a := s.app
 	snap := Snapshot{Aliases: a.Shorts(), Missing: true, PullAgeSec: 0, LabelColors: map[string]map[string]string{}}
 	we := a.newWorkEnv()
-	ops := a.loadOutbox()
-	snap.Queued = len(ops)
+	all := a.loadOutbox()
+	snap.Queued = len(all)
+	ops := effectiveOps(all)
 	byRef := map[string][]*Op{}
 	for _, op := range ops {
 		byRef[op.Ref] = append(byRef[op.Ref], op)
@@ -184,26 +181,25 @@ func (s *Session) load(withCreated bool) Snapshot {
 				continue
 			}
 			ref := short + "#" + r[0]
-			e := &eff{title: r[5], state: r[1], milestone: r[2], labels: splitLabels(r[3])}
-			var pend []*Op
+			// readIndex rows already carry the queued writes: they are counted here, not applied again
+			pending := 0
 			for _, op := range byRef[ref] {
 				if op.Op != "new" {
-					pend = append(pend, op)
+					pending++
 				}
 			}
-			applyPending(e, pend)
-			it := Item{Ref: ref, Alias: short, Num: n, State: e.state, Milestone: e.milestone, Labels: e.labels, Updated: r[4],
-				Title: e.title, Pending: len(pend)}
+			it := Item{Ref: ref, Alias: short, Num: n, State: r[1], Milestone: r[2], Labels: splitLabels(r[3]), Updated: r[4],
+				Title: r[5], Pending: pending}
 			if withCreated {
 				it.Created = s.createdAt(short, r[0])
 			}
-			it.Work = we.status(ref, short, n, e.state, e.labels)
+			it.Work = we.status(ref, short, n, it.State, it.Labels)
 			if c := claims[ref]; c != nil {
 				it.Claim = s.claimInfo(c)
 			}
 			snap.Items = append(snap.Items, it)
 		}
-		for _, op := range ops {
+		for _, op := range all {
 			if op.Op != "new" || shortOf(op.Ref) != short {
 				continue
 			}
@@ -250,7 +246,9 @@ func (s *Session) Detail(ref string) (Detail, error) {
 		if op.Op == "new" {
 			nw = op
 		} else {
-			pend = append(pend, op)
+			if op.LastError == nil {
+				pend = append(pend, op)
+			}
 			d.Pending = append(d.Pending, describe(op))
 		}
 	}
