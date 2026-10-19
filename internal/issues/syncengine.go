@@ -26,10 +26,9 @@ const (
 	autosyncMarkerStale = 120 // seconds after which a .autosync marker is taken to belong to a dead sync
 )
 
-// noAutopush: commands that are the sync themselves, or touch nothing the outbox holds.
-var noAutopush = map[string]bool{"push": true, "pull": true, "sync": true, "prune": true, "where": true}
-
 // AfterWrite sends queued writes in the background right after a write, so no command waits on GitHub.
+// It is called once, where an op is queued (enqueue, enqueueMs), so read commands and push/pull/sync/prune/where,
+// which queue nothing, never start one.
 // A background sync already running gets an .autosync.again note instead and pushes once more before it exits.
 func (a *App) AfterWrite() {
 	if off, _ := a.autosyncOff(); off || !a.remoteOpsQueued() {

@@ -119,7 +119,11 @@ func (a *App) enqueueMs(op, ref string, args map[string]any) (string, error) {
 	t := a.Now()
 	stem := fmt.Sprintf("%s.%06d-%d-%s", t.Format("20060102T150405"), t.UnixMicro()%1000000, os.Getpid(), uuid4())
 	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, File: a.mirror().opFile(stem)}
-	return stem, a.mirror().saveOp(o)
+	if err := a.mirror().saveOp(o); err != nil {
+		return stem, err
+	}
+	a.AfterWrite() // every queued op starts the background push
+	return stem, nil
 }
 
 // ---------- commands ----------

@@ -28,13 +28,13 @@ func TestSessionLoadAndWrites(t *testing.T) {
 	if rows := s.Milestones(); len(rows) != 2 || rows[0].Closed != 2 || rows[0].Open != 1 || rows[0].Due == "" {
 		t.Fatalf("%+v", rows)
 	}
-	if err := s.Comment("app#3", "hello"); err != nil {
+	if _, err := s.Do("comment", "app#3", "me", []string{"hello"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetMilestone("app#3", "v2"); err != nil {
+	if _, err := s.Do("milestone", "app#3", "me", []string{"v2"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Close("app#2", "me"); err != nil {
+	if _, err := s.Do("close", "app#2", "me", nil); err != nil {
 		t.Fatal(err)
 	}
 	// the CLI sees exactly the same three ops
@@ -48,18 +48,18 @@ func TestSessionLoadAndWrites(t *testing.T) {
 
 func TestSessionClaimNeverForces(t *testing.T) {
 	e, s := sessionEnv(t)
-	if _, err := s.Claim("app#3", "robin"); err != nil {
+	if _, err := s.Do("claim", "app#3", "robin", nil); err != nil {
 		t.Fatal(err)
 	}
-	if msg, err := s.Claim("app#3", "me"); err != ErrHeld || !strings.Contains(msg, "robin") {
+	if msg, err := s.Do("claim", "app#3", "me", nil); err != ErrHeld || !strings.Contains(msg, "robin") {
 		t.Fatalf("%q %v", msg, err)
 	}
-	if _, err := s.Release("app#3", "me"); err != ErrHeld {
+	if _, err := s.Do("release", "app#3", "me", nil); err != ErrHeld {
 		t.Fatalf("release by another: %v", err)
 	}
 	out, _, _ := e.run("claims")
 	contains0(t, "claims", out, "app#3")
-	if _, err := s.Release("app#3", "robin"); err != nil {
+	if _, err := s.Do("release", "app#3", "robin", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.Claims()) != 0 {
@@ -104,7 +104,7 @@ func TestSessionWriteKicksBackgroundPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Comment("app#3", "hello"); err != nil {
+	if _, err := s.Do("comment", "app#3", "me", []string{"hello"}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(spawn)

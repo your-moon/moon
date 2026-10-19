@@ -19,7 +19,8 @@ type Source interface {
 
 // SessionSource reads a mirror through an issues.Session, once and lazily.
 type SessionSource struct {
-	S *issues.Session
+	S  *issues.Session
+	Me string // the agent asking ($USER); empty when unknown
 
 	mu      sync.Mutex
 	snap    *issues.Snapshot
@@ -58,12 +59,25 @@ func (s *SessionSource) PRs() []issues.PRItem {
 	return s.prs
 }
 
+// Agent is who is asking.
+func (s *SessionSource) Agent() string { return s.Me }
+
 // Scope is the repos commands default to here (the project the working directory belongs to); empty means every repo.
 func (s *SessionSource) Scope() []string {
 	if sc := s.S.Scope(); sc.Kind != issues.KindGlobal {
 		return sc.Repos
 	}
 	return nil
+}
+
+// agented is implemented by a Source that knows who is asking, so claim offers that agent's own claims.
+type agented interface{ Agent() string }
+
+func agentOf(s Source) string {
+	if a, ok := s.(agented); ok {
+		return a.Agent()
+	}
+	return ""
 }
 
 // scoped is implemented by a Source that knows the project scope; a Source without it offers every repo.
@@ -76,5 +90,5 @@ func OpenSession(config, dir string, e issues.Env) Source {
 	if err != nil {
 		return nil
 	}
-	return &SessionSource{S: sess}
+	return &SessionSource{S: sess, Me: e.Getenv("USER")}
 }

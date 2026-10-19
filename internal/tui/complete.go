@@ -265,42 +265,12 @@ func (m Model) runLine(line string) (Model, tea.Cmd) {
 	switch cmd {
 	case "q", "quit":
 		return m, tea.Quit
-	case "claim":
+	case "claim", "release", "close", "reopen":
 		it, ok := needRef()
 		if !ok {
 			return m, nil
 		}
-		m.claimItem(it)
-	case "release":
-		it, ok := needRef()
-		if !ok {
-			return m, nil
-		}
-		m.releaseItem(it)
-	case "close", "reopen":
-		it, ok := needRef()
-		if !ok {
-			return m, nil
-		}
-		switch {
-		case cmd == "close" && it.State != "open":
-			m.msg = it.Ref + " is already closed"
-		case cmd == "reopen" && it.State != "closed":
-			m.msg = it.Ref + " is not closed"
-		default:
-			var err error
-			if cmd == "close" {
-				err = m.st.Close(it.Ref, m.opt.Agent)
-			} else {
-				err = m.st.Reopen(it.Ref)
-			}
-			if err != nil {
-				m.msg = "not queued: " + firstLine("", err)
-			} else {
-				m.msg = "queued " + cmd + " " + it.Ref
-				m.reload()
-			}
-		}
+		m.act(cmd, it.Ref)
 	case "comment":
 		it, ok := needRef()
 		if !ok {
@@ -316,18 +286,7 @@ func (m Model) runLine(line string) (Model, tea.Cmd) {
 			m.msg = "usage: :label <ref> add|remove <label>"
 			return m, nil
 		}
-		var add, rm []string
-		if rest[1] == "add" {
-			add = rest[2:]
-		} else {
-			rm = rest[2:]
-		}
-		if err := m.st.Label(it.Ref, add, rm); err != nil {
-			m.msg = "not queued: " + firstLine("", err)
-		} else {
-			m.msg = "queued label " + rest[1] + " " + strings.Join(rest[2:], ",") + " on " + it.Ref
-			m.reload()
-		}
+		m.act("label", it.Ref, rest[1:]...)
 	case "milestone":
 		it, ok := needRef()
 		if !ok {
@@ -337,13 +296,7 @@ func (m Model) runLine(line string) (Model, tea.Cmd) {
 			m.msg = "usage: :milestone <ref> <title|none>"
 			return m, nil
 		}
-		title := strings.Join(rest[1:], " ")
-		if err := m.st.SetMilestone(it.Ref, title); err != nil {
-			m.msg = "not queued: " + firstLine("", err)
-		} else {
-			m.msg = "queued milestone " + title + " on " + it.Ref
-			m.reload()
-		}
+		m.act("milestone", it.Ref, rest[1:]...)
 	case "sort":
 		m.lineSort(rest)
 	case "filter":

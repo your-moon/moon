@@ -287,3 +287,23 @@ func TestOutboxCompletion(t *testing.T) {
 	want(t, "outbox drop flag", list(f.complete("issues", "outbox", "drop", "abcd", "--cas")), "--cascade")
 	want(t, "outbox ls format", list(f.complete("issues", "outbox", "ls", "--format", "j")), "json")
 }
+
+// moon#33: claim is offered on an open issue that is unclaimed, stale, or held by this same agent (renew),
+// and not on one held live by another agent.
+func TestClaimOffersOwnClaimsNotOthers(t *testing.T) {
+	f := newFixture(t, standard) // erp#2 is held by alice, erp#510 by bob, both live
+	opts := f.opts()
+	opts.Open = func(cfg, dir string) Source {
+		return OpenSession(f.cfg, dir, issues.Env{Getenv: func(k string) string {
+			if k == "USER" {
+				return "alice"
+			}
+			return ""
+		}, Cwd: f.dir})
+	}
+	got := list(Complete(opts, []string{"issues", "claim", ""}))
+	want(t, "claim as alice", got, "erp#51 erp#50 erp#2 erp#3 web#3")
+	if strings.Contains(got, "erp#510") {
+		t.Errorf("offered an issue held live by bob: %s", got)
+	}
+}
