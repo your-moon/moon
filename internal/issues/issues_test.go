@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -528,4 +529,32 @@ func TestDotMoonMirrorDefault(t *testing.T) {
 	if err != nil || c.MirrorDir != filepath.Join(d, ".moon", "issues") {
 		t.Fatalf("%+v %v", c, err)
 	}
+}
+
+func TestWriteKicksBackgroundPush(t *testing.T) {
+	e := newEnv(t)
+	e.extra["ISSUES_NO_AUTOSYNC"] = ""
+	spawn := filepath.Join(t.TempDir(), "spawn.log")
+	e.extra["ISSUES_TEST_SPAWN"] = spawn
+	seedIndex(e)
+	if _, errs, code := e.run("comment", "app#9", "--body", "hi"); code != 0 {
+		t.Fatalf("comment: %d %q", code, errs)
+	}
+	b, _ := os.ReadFile(spawn)
+	eq(t, "first write spawns", string(b), "spawn\n")
+	// a second write while that sync runs leaves a note instead of a second process
+	e.run("comment", "app#9", "--body", "again")
+	b, _ = os.ReadFile(spawn)
+	eq(t, "no second spawn", string(b), "spawn\n")
+	if !e.exists(".autosync.again") {
+		t.Fatal("a write during a running sync must leave .autosync.again")
+	}
+	// reads do not kick a push
+	os.Remove(filepath.Join(e.home, ".autosync"))
+	os.Remove(filepath.Join(e.home, ".autosync.again"))
+	e.write("app/lastpull", strconv.FormatInt(e.now.Unix(), 10)+"\n")
+	e.write("lib/lastpull", strconv.FormatInt(e.now.Unix(), 10)+"\n")
+	e.run("ls")
+	b, _ = os.ReadFile(spawn)
+	eq(t, "read: no spawn", string(b), "spawn\n")
 }

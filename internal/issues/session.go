@@ -1,7 +1,6 @@
 package issues
 
 import (
-	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -98,7 +97,7 @@ func NewSessionScoped(cfgPath, dir string, e Env, opt ScopeOpts) (*Session, erro
 		now = time.Now
 	}
 	a := &App{Home: home, GH: ExecGH{}, Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
-		Environ: e.Getenv, Repos: cfg.Repos}
+		Environ: e.Getenv, Repos: cfg.Repos, SpawnSync: spawnSync}
 	git := e.GitRemote
 	if git == nil {
 		git = GitRemoteOrigin
@@ -323,62 +322,36 @@ func stripFrontMatter(s string) string {
 	return s
 }
 
-// run executes a command handler and returns what it printed.
-func (s *Session) run(fn func(*App) error) (string, error) {
-	var buf bytes.Buffer
-	s.app.Out = &buf
-	defer func() { s.app.Out = io.Discard }()
-	err := fn(s.app)
-	return strings.TrimSpace(buf.String()), err
-}
-
-func newOpts(pos []string, kv ...string) *Opts {
-	o := &Opts{S: map[string]string{}, L: map[string][]string{}, B: map[string]bool{}, Seen: map[string]bool{}, Pos: pos}
-	for i := 0; i+1 < len(kv); i += 2 {
-		o.S[kv[i]] = kv[i+1]
-		o.Seen[kv[i]] = true
-	}
-	return o
-}
-
-// Claim takes a claim through the same code as `moon issues claim`. A claim held by another agent returns ErrHeld, never forced.
+// Claim takes a claim like `moon issues claim` with a 120m lease. A claim held by another agent returns ErrHeld, never forced.
 func (s *Session) Claim(ref, agent string) (string, error) {
-	o := newOpts([]string{ref}, "agent", agent, "ttl", "120m", "pid", "0")
-	msg, err := s.run(func(a *App) error { return a.cmdClaim(o) })
-	var ee *exitError
-	if errors.As(err, &ee) && ee.Code == 3 {
-		return msg, ErrHeld
-	}
-	return msg, err
+	msg, err := s.app.claim(ref, agent, 120*60, 0)
+	return strings.TrimSpace(msg), err
 }
 
 // Release drops the agent's own claim; someone else's claim returns ErrHeld. Never forced.
 func (s *Session) Release(ref, agent string) (string, error) {
-	o := newOpts([]string{ref}, "agent", agent)
-	msg, err := s.run(func(a *App) error { return a.cmdRelease(o) })
-	var ee *exitError
-	if errors.As(err, &ee) && ee.Code == 3 {
-		return msg, ErrHeld
-	}
-	return msg, err
+	msg, err := s.app.release(ref, agent, false)
+	return strings.TrimSpace(msg), err
 }
 
 // Close queues a close (releasing the agent's own claim, as the CLI does with --agent).
 func (s *Session) Close(ref, agent string) error {
-	o := newOpts([]string{ref}, "reason", "completed", "agent", agent)
-	_, err := s.run(func(a *App) error { return a.cmdSimple("close")(o) })
+	_, err := s.app.closeIssue(ref, "completed", "", agent, false)
+	s.app.kickPush()
 	return err
 }
 
 // Reopen queues a reopen.
 func (s *Session) Reopen(ref string) error {
-	_, err := s.run(func(a *App) error { return a.cmdSimple("reopen")(newOpts([]string{ref})) })
+	_, err := s.app.reopen(ref)
+	s.app.kickPush()
 	return err
 }
 
 // Comment queues a comment.
 func (s *Session) Comment(ref, body string) error {
-	_, err := s.run(func(a *App) error { return a.cmdSimple("comment")(newOpts([]string{ref}, "body", body)) })
+	_, err := s.app.comment(ref, body)
+	s.app.kickPush()
 	return err
 }
 
@@ -470,15 +443,15 @@ func (s *Session) Milestones() []MilestoneRow {
 
 // SetMilestone queues a milestone change like `moon issues milestone <ref> <title>`; title "none" clears it.
 func (s *Session) SetMilestone(ref, title string) error {
-	_, err := s.run(func(a *App) error { return a.cmdSimple("milestone")(newOpts([]string{ref, title})) })
+	_, err := s.app.setMilestone(ref, title)
+	s.app.kickPush()
 	return err
 }
 
 // Label queues label changes like `moon issues label <ref> --add A --remove B`.
 func (s *Session) Label(ref string, add, remove []string) error {
-	o := newOpts([]string{ref})
-	o.L["add"], o.L["remove"] = add, remove
-	_, err := s.run(func(a *App) error { return a.cmdSimple("label")(o) })
+	_, err := s.app.labels(ref, add, remove)
+	s.app.kickPush()
 	return err
 }
 

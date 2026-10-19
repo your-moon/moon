@@ -41,9 +41,11 @@ func (a *App) scopeNeedsOne(what string) (string, error) {
 	return "", die("%s needs one repo: %s. Pick one with -R <alias>; aliases: %s", what, where, strings.Join(a.Shorts(), ", "))
 }
 
-// refCommands are the commands whose first positional is an issue ref.
-var refCommands = map[string]bool{"show": true, "pr show": true, "claim": true, "release": true, "comment": true,
-	"close": true, "reopen": true, "label": true, "milestone": true, "edit": true}
+// takesRef: the command's first positional is an issue ref (posKinds is the one list of them).
+func takesRef(name string) bool {
+	k := posKinds[name]
+	return len(k) > 0 && k[0] == "ref"
+}
 
 // bareRef turns a bare number ("585", "#585", "L-3") into alias#N using the scope. A ref that has an alias is left alone.
 func (a *App) bareRef(ref string) (string, error) {
