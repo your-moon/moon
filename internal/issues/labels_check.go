@@ -13,7 +13,7 @@ const labelsFetched = 100
 // repoLabels are the label names `pull` mirrored for a repo. ok is false when the list cannot vouch for
 // absence: never pulled, or as long as one fetch can be.
 func (a *App) repoLabels(short string) (names []string, ok bool) {
-	s, err := a.mirror().readLabelsText(short)
+	s, err := a.mirror().Issues.Read(short, fileLabels)
 	if err != nil {
 		return nil, false
 	}

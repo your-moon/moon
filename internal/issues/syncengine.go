@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 // The sync engine: every rule for when a background `sync` starts, and the status text about it.
@@ -36,11 +34,11 @@ func (a *App) AfterWrite() {
 		return
 	}
 	if !a.takeAutosyncMarker() {
-		os.WriteFile(a.againPath(), nil, 0o644)
+		a.mirror().Markers.NoteAgain()
 		return
 	}
 	if err := a.SpawnSync(a); err != nil {
-		os.Remove(filepath.Join(a.Home, ".autosync"))
+		a.mirror().Markers.Release()
 	}
 }
 
@@ -58,19 +56,17 @@ func (a *App) remoteOpsQueued() bool {
 	return false
 }
 
-func (a *App) againPath() string { return filepath.Join(a.Home, ".autosync.again") }
-
 // EndBackgroundSync (the end hook of `sync --quiet`) ends a background sync. A write queued while it ran left .autosync.again;
 // then the marker is taken back and the outbox pushed again, so that write is not stranded until the next command.
 func (a *App) EndBackgroundSync(pushOnly []string) {
 	for i := 0; i < 5; i++ {
-		os.Remove(filepath.Join(a.Home, ".autosync"))
-		if os.Remove(a.againPath()) != nil || !a.takeAutosyncMarker() {
+		a.mirror().Markers.Release()
+		if !a.mirror().Markers.TakeAgain() || !a.takeAutosyncMarker() {
 			return
 		}
 		a.pushRepos(pushOnly, "")
 	}
-	os.Remove(filepath.Join(a.Home, ".autosync"))
+	a.mirror().Markers.Release()
 }
 
 // Autosync is the background `sync` that a read starts when the mirror is old. It can be turned off for a
@@ -97,7 +93,7 @@ func (a *App) autosyncOff() (bool, string) {
 
 // autosyncLast is the last SYNC line the background sync logged ("" when it never ran).
 func (a *App) autosyncLast() string {
-	s, err := readText(filepath.Join(a.Home, "autosync.log"))
+	s, err := a.mirror().Markers.LastLog()
 	if err != nil {
 		return ""
 	}
@@ -166,7 +162,7 @@ func (a *App) BeforeRead(name string, o *Opts) error {
 		return nil
 	}
 	if err := a.SpawnSync(a); err != nil {
-		os.Remove(filepath.Join(a.Home, ".autosync"))
+		a.mirror().Markers.Release()
 		return nil
 	}
 	if ok {
@@ -180,7 +176,7 @@ func (a *App) BeforeRead(name string, o *Opts) error {
 func (a *App) mirrorAge(shorts []string) (float64, bool) {
 	var max float64
 	for _, s := range shorts {
-		b, err := a.mirror().readLastpull(s)
+		b, err := a.mirror().Issues.Read(s, fileLastpull)
 		t, perr := strconv.Atoi(pyStrip(b))
 		if err != nil || perr != nil {
 			return 0, false
@@ -192,37 +188,12 @@ func (a *App) mirrorAge(shorts []string) (float64, bool) {
 	return max, true
 }
 
-func (a *App) takeAutosyncMarker() bool {
-	os.MkdirAll(a.Home, 0o755)
-	path := filepath.Join(a.Home, ".autosync")
-	for i := 0; i < 2; i++ {
-		if err := createExcl(path, strconv.Itoa(os.Getpid())+"\n"); err == nil { // M_asmarker
-			return true
-		}
-		st, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		if time.Since(st.ModTime()).Seconds() <= autosyncMarkerStale { // M_asstale
-			return false
-		}
-		gone := path + ".stale." + uuid4()
-		if os.Rename(path, gone) == nil {
-			os.Remove(gone)
-		}
-	}
-	return false
-}
+func (a *App) takeAutosyncMarker() bool { return a.mirror().Markers.Take(autosyncMarkerStale) }
 
 // spawnSync starts `moon issues sync --quiet` fully detached, output appended to autosync.log.
 func spawnSync(a *App) error {
 	if f := a.Environ("ISSUES_TEST_SPAWN"); f != "" {
-		fh, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return err
-		}
-		fh.WriteString("spawn\n")
-		return fh.Close()
+		return appendUserText(f, "spawn\n")
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -231,7 +202,7 @@ func spawnSync(a *App) error {
 	if strings.HasSuffix(self, ".test") { // a go test binary would re-run its tests detached, and those spawn again
 		return errors.New("background sync: not from a test binary")
 	}
-	log, err := os.OpenFile(filepath.Join(a.Home, "autosync.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	log, err := a.mirror().Markers.Log()
 	if err != nil {
 		return err
 	}

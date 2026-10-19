@@ -2,7 +2,6 @@ package issues
 
 import (
 	"encoding/json"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -144,7 +143,7 @@ func TestShowJSONQueuedNewBeatsLocalmap(t *testing.T) {
 	eq(t, "queued L-1 stays local", showJSONOf(t, e, "app#L-1")["ref"].(string), "app#L-1")
 	for _, op := range e.app().loadOutbox() {
 		if op.Ref == "app#L-1" {
-			os.Remove(op.File)
+			e.app().mirror().removeOp(op)
 		}
 	}
 	// L-2 is still queued, which must not stop L-1 from resolving

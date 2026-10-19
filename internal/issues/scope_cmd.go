@@ -86,7 +86,7 @@ func (a *App) mirrorHas(short, ident string) bool {
 			return true
 		}
 	}
-	return a.mirror().hasIssueFile(short, ident)
+	return a.mirror().Issues.Exists(short, ident)
 }
 
 // scopeHeader is the line a terminal gets above every list.

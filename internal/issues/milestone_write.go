@@ -18,7 +18,7 @@ import (
 // nextMilestoneSeq hands out the next M-<n> (or, for a local-only repo, the next milestone number).
 // Same design as nextLocalSeq: an exclusive flock on a sidecar, a counter that only goes up.
 func (a *App) nextMilestoneSeq(short string) (int, error) {
-	return a.mirror().nextMilestoneSeq(short, func() int { return a.scanMaxMsSeq(short) })
+	return a.mirror().LocalIDs.Next(short, famMilestone, func() int { return a.scanMaxMsSeq(short) })
 }
 
 func msSeqOf(id string) int {
@@ -42,11 +42,9 @@ func (a *App) scanMaxMsSeq(short string) int {
 			note(msSeqOf(argStr(o.Args, "local_id")))
 		}
 	}
-	if s, err := a.mirror().readLocalmap(); err == nil {
-		for _, line := range strings.Split(s, "\n") {
-			if p := strings.Split(line, "\t"); len(p) == 3 && p[0] == short {
-				note(msSeqOf(p[1]))
-			}
+	for _, r := range a.mirror().LocalIDs.Rows() {
+		if r.Short == short {
+			note(msSeqOf(r.Lid))
 		}
 	}
 	for _, r := range a.readMsFile(short) {
@@ -118,7 +116,7 @@ func dupError(short, title string, d *msRec) error {
 func (a *App) enqueueMs(op, ref string, args map[string]any) (string, error) {
 	t := a.Now()
 	stem := fmt.Sprintf("%s.%06d-%d-%s", t.Format("20060102T150405"), t.UnixMicro()%1000000, os.Getpid(), uuid4())
-	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, File: a.mirror().opFile(stem)}
+	o := &Op{OpID: stem, TS: a.nowISO(), Op: op, Ref: ref, Args: args, Key: stem}
 	return stem, a.mirror().saveOp(o)
 }
 
@@ -286,19 +284,19 @@ func (a *App) applyMsLocalOnly(short, title, op string, args map[string]any) err
 
 // renameMsInMirror rewrites the milestone title in the issue files and index of alias. The caller holds .pull.lock.
 func (a *App) renameMsInMirror(short, old, new string) error {
-	for _, p := range a.mirrorIssueFiles(short) {
-		h := readHeader(p)
+	for _, id := range a.mirror().Issues.Idents(short) {
+		h := a.issueHeader(short, id)
 		if h == nil || hStr(h, "milestone") != old {
 			continue
 		}
-		node, comments, err := loadLocalIssue(p)
+		node, comments, err := a.loadLocalIssue(short, id)
 		if err != nil {
 			continue
 		}
 		node.Milestone = &struct {
 			Title string `json:"title"`
 		}{new}
-		if err := a.mirror().writeIssueFile(p, renderIssue(node)+comments); err != nil {
+		if err := a.mirror().Issues.Put(short, id, renderIssue(node)+comments); err != nil {
 			return err
 		}
 	}
@@ -481,7 +479,7 @@ func (a *App) execMsNew(short, repo string, op *Op) error {
 	}
 	num := found.Number
 	if lid != "" {
-		if err := a.mirror().appendLocalmap(short, lid, num); err != nil {
+		if err := a.mirror().LocalIDs.Append(short, lid, num); err != nil {
 			return err
 		}
 	}

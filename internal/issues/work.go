@@ -269,12 +269,12 @@ func (a *App) newWorkEnv() *workEnv {
 	w := &workEnv{a: a, claims: map[string]*Claim{}, deps: map[string][]int{}, prs: map[string][]WorkPR{},
 		ctx: a.workCtx()}
 	m := a.mirror()
-	for _, name := range m.claimNames() {
+	for _, name := range m.Claims.List() {
 		short, ident, ok := strings.Cut(strings.TrimSuffix(name, ".json"), "-")
 		if !ok {
 			continue
 		}
-		if c := a.readClaim(m.claimNamePath(name)); c != nil {
+		if c := a.readClaim(name); c != nil {
 			w.claims[short+"#"+ident] = c
 		}
 	}
@@ -292,7 +292,7 @@ func (w *workEnv) openPRs(short string) []WorkPR {
 		}
 		n, _ := strconv.Atoi(r.Number)
 		text := r.Title
-		if s, err := w.a.mirror().readPRText(short, r.Number); err == nil {
+		if s, err := w.a.mirror().Issues.PR(short, r.Number); err == nil {
 			text += "\n" + stripFrontMatter(s)
 		}
 		l = append(l, WorkPR{Number: n, Closes: r.closesList(), Text: text})
@@ -487,11 +487,11 @@ func (a *App) cmdSweep(o *Opts) error {
 	released := map[string]bool{}
 	if release {
 		for _, it := range items {
-			p, err := a.claimPath(it.ref)
+			p, err := a.claimKey(it.ref)
 			if err != nil {
 				continue
 			}
-			if c := a.readClaim(p); c != nil && c.TS == it.ts && c.Agent == it.agent && a.mirror().remove(p) == nil {
+			if c := a.readClaim(p); c != nil && c.TS == it.ts && c.Agent == it.agent && a.mirror().Claims.Remove(p) == nil {
 				released[it.ref] = true
 			}
 		}

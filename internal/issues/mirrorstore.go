@@ -8,52 +8,30 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // mirrorStore owns the on-disk mirror format, which a Python tool shares, so nothing here may change shape:
 // per-repo index.tsv, <n>.md, pr/<n>.md, prs.tsv, milestones.tsv, labels.tsv, lastpull and the cursors,
-// local-seq / local-mseq counters, plus claims/*.json, localmap.tsv and outbox/*.json under the mirror home.
-// Every other file in this package reaches those files through it (mirrorstore_guard_test.go checks that).
-// The autosync marker files belong to the sync engine, not here.
-type mirrorStore struct{ home string }
+// local-seq / local-mseq counters, plus claims/*.json, localmap.tsv and outbox/*.json under the mirror home,
+// and the autosync marker files.
+//
+// It is five typed collections, each addressed by key, never by path: Issues (everything under a repo dir),
+// Claims, Outbox, LocalIDs (localmap.tsv and the id counters) and Markers (autosync). Every other file in
+// this package reaches the disk through them (mirrorstore_guard_test.go checks that; config.go reads the
+// config file and is the one exemption).
+type mirrorStore struct {
+	home     string
+	Issues   Issues
+	Claims   Claims
+	Outbox   Outbox
+	LocalIDs LocalIDs
+	Markers  Markers
+}
 
-func (a *App) mirror() mirrorStore { return mirrorStore{a.Home} }
-
-// ---------- paths ----------
-
-func (m mirrorStore) repoDir(short string) string { return filepath.Join(m.home, short) }
-func (m mirrorStore) outboxDir() string           { return filepath.Join(m.home, "outbox") }
-func (m mirrorStore) claimsDir() string           { return filepath.Join(m.home, "claims") }
-func (m mirrorStore) localmapPath() string        { return filepath.Join(m.home, "localmap.tsv") }
-func (m mirrorStore) indexPath(short string) string {
-	return filepath.Join(m.home, short, "index.tsv")
-}
-func (m mirrorStore) prsPath(short string) string { return filepath.Join(m.home, short, "prs.tsv") }
-func (m mirrorStore) msPath(short string) string {
-	return filepath.Join(m.home, short, "milestones.tsv")
-}
-func (m mirrorStore) labelsPath(short string) string {
-	return filepath.Join(m.home, short, "labels.tsv")
-}
-func (m mirrorStore) lastpullPath(short string) string {
-	return filepath.Join(m.home, short, "lastpull")
-}
-func (m mirrorStore) cursorPath(short string) string { return filepath.Join(m.home, short, "cursor") }
-func (m mirrorStore) prCursorPath(short string) string {
-	return filepath.Join(m.home, short, "prcursor")
-}
-func (m mirrorStore) prDir(short string) string { return filepath.Join(m.home, short, "pr") }
-func (m mirrorStore) issueFile(short string, n int) string {
-	return filepath.Join(m.home, short, fmt.Sprintf("%d.md", n))
-}
-func (m mirrorStore) issueFileIdent(short, ident string) string {
-	return filepath.Join(m.home, short, ident+".md")
-}
-func (m mirrorStore) prFile(short, ident string) string {
-	return filepath.Join(m.home, short, "pr", ident+".md")
-}
-func (m mirrorStore) claimFile(short, ident string) string {
-	return filepath.Join(m.claimsDir(), short+"-"+ident+".json")
+func (a *App) mirror() mirrorStore {
+	h := a.Home
+	return mirrorStore{h, Issues{h}, Claims{h}, Outbox{h}, LocalIDs{h}, Markers{h}}
 }
 
 // ---------- low-level file helpers (the only os file calls on mirror data) ----------
@@ -105,15 +83,38 @@ func createExcl(path, body string) error {
 // readUserText reads a file the person named on the command line (not mirror data).
 func readUserText(path string) (string, error) { return readText(path) }
 
-func (m mirrorStore) remove(path string) error { return os.Remove(path) }
-func (m mirrorStore) exists(path string) bool  { _, err := os.Stat(path); return err == nil }
+// appendUserText appends text to a file the person (or a test) named; not mirror data.
+func appendUserText(path, text string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(text)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
 
 // writeIfChanged writes text unless the file already holds it; changed says whether it wrote.
-func (m mirrorStore) writeIfChanged(path, text string) (bool, error) {
+func writeIfChanged(path, text string) (bool, error) {
 	if old, err := readText(path); err == nil && old == text {
 		return false, nil
 	}
 	return true, atomicWrite(path, text, false)
+}
+
+// listNames lists the files of dir whose name ends in suffix, sorted. A missing dir lists nothing.
+func listNames(dir, suffix string) []string {
+	ents, _ := os.ReadDir(dir)
+	names := []string{}
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), suffix) && !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ---------- locks ----------
@@ -149,124 +150,199 @@ func (m mirrorStore) tryPushLock() (f *os.File, ok bool) {
 	return f, true
 }
 
-// ---------- issues, PRs, index, labels, cursors ----------
+// ---------- Issues: everything under <home>/<repo>/ ----------
 
-// issueFiles lists <repo>/<n>.md paths in directory order.
-func (m mirrorStore) issueFiles(short string) []string {
-	d := m.repoDir(short)
-	ents, err := os.ReadDir(d)
+// repoFile is one of the per-repo data files. changedOnly files are rewritten only when the text differs.
+type repoFile struct {
+	name        string
+	changedOnly bool
+}
+
+var (
+	fileIndex      = repoFile{"index.tsv", true}
+	filePRs        = repoFile{"prs.tsv", true}
+	fileMilestones = repoFile{"milestones.tsv", false}
+	fileLabels     = repoFile{"labels.tsv", false}
+	fileLastpull   = repoFile{"lastpull", false}
+	fileCursor     = repoFile{"cursor", true}
+	filePRCursor   = repoFile{"prcursor", true}
+)
+
+// Issues holds the per-repo files, the issue files <n>.md (key: repo short + ident) and the PR files pr/<n>.md.
+type Issues struct{ home string }
+
+func (c Issues) dir(short string) string   { return filepath.Join(c.home, short) }
+func (c Issues) prDir(short string) string { return filepath.Join(c.home, short, "pr") }
+
+// Read, Write and Has address one per-repo data file. Write says whether it wrote.
+func (c Issues) Read(short string, f repoFile) (string, error) {
+	return readText(filepath.Join(c.dir(short), f.name))
+}
+func (c Issues) Write(short string, f repoFile, text string) (bool, error) {
+	p := filepath.Join(c.dir(short), f.name)
+	if f.changedOnly {
+		return writeIfChanged(p, text)
+	}
+	return true, atomicWrite(p, text, false)
+}
+func (c Issues) Has(short string, f repoFile) bool {
+	_, err := os.Stat(filepath.Join(c.dir(short), f.name))
+	return err == nil
+}
+
+// Idents lists the idents of the issue files of a repo, in directory order.
+func (c Issues) Idents(short string) []string {
+	var out []string
+	for _, n := range listNames(c.dir(short), ".md") {
+		out = append(out, strings.TrimSuffix(n, ".md"))
+	}
+	return out
+}
+
+func (c Issues) issueFile(short, ident string) string {
+	return filepath.Join(c.dir(short), ident+".md")
+}
+
+func (c Issues) Get(short, ident string) (string, error) { return readText(c.issueFile(short, ident)) }
+func (c Issues) Exists(short, ident string) bool {
+	_, err := os.Stat(c.issueFile(short, ident))
+	return err == nil
+}
+func (c Issues) Put(short, ident, text string) error {
+	return atomicWrite(c.issueFile(short, ident), text, false)
+}
+
+// PutIfChanged writes issue n unless its file already holds text; changed says whether it wrote.
+func (c Issues) PutIfChanged(short string, n int, text string) (bool, error) {
+	return writeIfChanged(c.issueFile(short, strconv.Itoa(n)), text)
+}
+func (c Issues) Remove(short, ident string) error { return os.Remove(c.issueFile(short, ident)) }
+
+// Head returns up to n bytes from the start of an issue file.
+func (c Issues) Head(short, ident string, n int) (string, error) {
+	f, err := os.Open(c.issueFile(short, ident))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	buf := make([]byte, n)
+	k, _ := f.Read(buf)
+	return string(buf[:k]), nil
+}
+
+func (c Issues) prFile(short, ident string) string { return filepath.Join(c.prDir(short), ident+".md") }
+
+func (c Issues) PR(short, ident string) (string, error) { return readText(c.prFile(short, ident)) }
+func (c Issues) PutPR(short string, n int, text string) (bool, error) {
+	return writeIfChanged(c.prFile(short, strconv.Itoa(n)), text)
+}
+func (c Issues) RemovePR(short, ident string) { os.Remove(c.prFile(short, ident)) }
+
+// PRIdents lists the idents of the PR files of a repo.
+func (c Issues) PRIdents(short string) []string {
+	var out []string
+	for _, n := range listNames(c.prDir(short), ".md") {
+		out = append(out, strings.TrimSuffix(n, ".md"))
+	}
+	return out
+}
+
+// Ensure creates the repo dir (and the PR dir when pr is true).
+func (c Issues) Ensure(short string, pr bool) error {
+	if pr {
+		return os.MkdirAll(c.prDir(short), 0o755)
+	}
+	return os.MkdirAll(c.dir(short), 0o755)
+}
+
+// ---------- Claims: claims/<key>, key = <repo>-<ident>.json ----------
+
+type Claims struct{ home string }
+
+func (c Claims) dir() string            { return filepath.Join(c.home, "claims") }
+func (c Claims) path(key string) string { return filepath.Join(c.dir(), key) }
+
+// Key is the key of the claim on short#ident.
+func (Claims) Key(short, ident string) string { return short + "-" + ident + ".json" }
+
+// List lists the keys of all claims, sorted.
+func (c Claims) List() []string { return listNames(c.dir(), ".json") }
+
+func (c Claims) Get(key string) ([]byte, error) { return os.ReadFile(c.path(key)) }
+func (c Claims) Put(key, body string) error     { return atomicWrite(c.path(key), body, false) }
+
+// Create writes the claim only if there is none (exclusive create); the error then satisfies os.IsExist.
+func (c Claims) Create(key, body string) error {
+	os.MkdirAll(c.dir(), 0o755)
+	return createExcl(c.path(key), body)
+}
+func (c Claims) Remove(key string) error      { return os.Remove(c.path(key)) }
+func (c Claims) Rename(from, to string) error { return os.Rename(c.path(from), c.path(to)) }
+
+// ---------- Outbox: outbox/<key>.json, key = the op stem ----------
+
+type Outbox struct{ home string }
+
+func (c Outbox) dir() string            { return filepath.Join(c.home, "outbox") }
+func (c Outbox) path(key string) string { return filepath.Join(c.dir(), key+".json") }
+
+// List lists the keys of the queued ops, oldest first.
+func (c Outbox) List() []string {
+	names := listNames(c.dir(), ".json")
+	for i, n := range names {
+		names[i] = strings.TrimSuffix(n, ".json")
+	}
+	return names
+}
+func (c Outbox) Get(key string) ([]byte, error) { return os.ReadFile(c.path(key)) }
+func (c Outbox) Put(key, text string) error     { return atomicWrite(c.path(key), text, true) }
+func (c Outbox) Remove(key string) error        { return os.Remove(c.path(key)) }
+
+// ---------- LocalIDs: localmap.tsv and the per-family id counters ----------
+
+type LocalIDs struct{ home string }
+
+// LocalRow is one line of localmap.tsv: local id Lid of Short became GitHub number N. OK is false when N
+// was not a number.
+type LocalRow struct {
+	Short, Lid string
+	N          int
+	OK         bool
+}
+
+func (c LocalIDs) path() string { return filepath.Join(c.home, "localmap.tsv") }
+
+// Rows lists the lines of localmap.tsv that have three fields.
+func (c LocalIDs) Rows() []LocalRow {
+	s, err := readText(c.path())
 	if err != nil {
 		return nil
 	}
-	var out []string
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".md") && !e.IsDir() {
-			out = append(out, filepath.Join(d, e.Name()))
+	var out []LocalRow
+	for _, line := range strings.Split(s, "\n") {
+		p := strings.Split(line, "\t")
+		if len(p) != 3 {
+			continue
 		}
+		n, err := strconv.Atoi(p[2])
+		out = append(out, LocalRow{p[0], p[1], n, err == nil})
 	}
 	return out
 }
 
-// prFileNames lists the file names under <repo>/pr.
-func (m mirrorStore) prFileNames(short string) []string {
-	ents, _ := os.ReadDir(m.prDir(short))
-	var out []string
-	for _, e := range ents {
-		out = append(out, e.Name())
-	}
-	return out
-}
-
-func (m mirrorStore) removePRFile(short, name string) { os.Remove(filepath.Join(m.prDir(short), name)) }
-func (m mirrorStore) ensureRepoDir(short string) error {
-	return os.MkdirAll(m.repoDir(short), 0o755)
-}
-func (m mirrorStore) ensurePRDir(short string) error { return os.MkdirAll(m.prDir(short), 0o755) }
-
-func (m mirrorStore) hasIssueFile(short, ident string) bool {
-	return m.exists(m.issueFileIdent(short, ident))
-}
-func (m mirrorStore) hasIndex(short string) bool    { return m.exists(m.indexPath(short)) }
-func (m mirrorStore) hasLastpull(short string) bool { return m.exists(m.lastpullPath(short)) }
-func (m mirrorStore) readIndexText(short string) (string, error) {
-	return readText(m.indexPath(short))
-}
-func (m mirrorStore) writeIndexText(short, text string) (bool, error) {
-	return m.writeIfChanged(m.indexPath(short), text)
-}
-func (m mirrorStore) readPRsText(short string) (string, error) { return readText(m.prsPath(short)) }
-func (m mirrorStore) writePRsText(short, text string) (bool, error) {
-	return m.writeIfChanged(m.prsPath(short), text)
-}
-func (m mirrorStore) readPRText(short, ident string) (string, error) {
-	return readText(m.prFile(short, ident))
-}
-func (m mirrorStore) writePRText(short string, n int, text string) (bool, error) {
-	return m.writeIfChanged(filepath.Join(m.prDir(short), fmt.Sprintf("%d.md", n)), text)
-}
-func (m mirrorStore) readIssueText(short, ident string) (string, error) {
-	return readText(m.issueFileIdent(short, ident))
-}
-func (m mirrorStore) writeIssueText(short string, n int, text string) (bool, error) {
-	return m.writeIfChanged(m.issueFile(short, n), text)
-}
-func (m mirrorStore) writeIssueFile(path, text string) error { return atomicWrite(path, text, false) }
-func (m mirrorStore) readLabelsText(short string) (string, error) {
-	return readText(m.labelsPath(short))
-}
-func (m mirrorStore) writeLabelsText(short, text string) error {
-	return atomicWrite(m.labelsPath(short), text, false)
-}
-func (m mirrorStore) readLastpull(short string) (string, error) {
-	return readText(m.lastpullPath(short))
-}
-func (m mirrorStore) writeLastpull(short, text string) error {
-	return atomicWrite(m.lastpullPath(short), text, false)
-}
-func (m mirrorStore) readCursor(short string) (string, error) { return readText(m.cursorPath(short)) }
-func (m mirrorStore) writeCursor(short, text string) (bool, error) {
-	return m.writeIfChanged(m.cursorPath(short), text)
-}
-func (m mirrorStore) readPRCursor(short string) (string, error) {
-	return readText(m.prCursorPath(short))
-}
-func (m mirrorStore) writePRCursor(short, text string) (bool, error) {
-	return m.writeIfChanged(m.prCursorPath(short), text)
-}
-func (m mirrorStore) readMsText(short string) (string, error) { return readText(m.msPath(short)) }
-func (m mirrorStore) writeMsText(short, text string) error {
-	return atomicWrite(m.msPath(short), text, false)
-}
-
-// ---------- claims ----------
-
-// claimNames lists claims/*.json file names, sorted.
-func (m mirrorStore) claimNames() []string {
-	ents, _ := os.ReadDir(m.claimsDir())
-	names := []string{}
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
+// Lookup is the GitHub number local id lid of short became, or 0.
+func (c LocalIDs) Lookup(short, lid string) int {
+	for _, r := range c.Rows() {
+		if r.OK && r.Short == short && r.Lid == lid {
+			return r.N
 		}
 	}
-	sort.Strings(names)
-	return names
+	return 0
 }
 
-func (m mirrorStore) claimNamePath(name string) string           { return filepath.Join(m.claimsDir(), name) }
-func (m mirrorStore) readClaimBytes(path string) ([]byte, error) { return os.ReadFile(path) }
-func (m mirrorStore) ensureClaimsDir()                           { os.MkdirAll(m.claimsDir(), 0o755) }
-func (m mirrorStore) writeClaim(path, body string) error         { return atomicWrite(path, body, false) }
-func (m mirrorStore) createClaim(path, body string) error        { return createExcl(path, body) }
-func (m mirrorStore) renameClaim(from, to string) error          { return os.Rename(from, to) }
-
-// ---------- localmap ----------
-
-func (m mirrorStore) readLocalmap() (string, error) { return readText(m.localmapPath()) }
-
-// appendLocalmap records that local id lid of short became GitHub number n.
-func (m mirrorStore) appendLocalmap(short, lid string, n int) error {
-	lm, err := os.OpenFile(m.localmapPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+// Append records that local id lid of short became GitHub number n.
+func (c LocalIDs) Append(short, lid string, n int) error {
+	lm, err := os.OpenFile(c.path(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -275,50 +351,27 @@ func (m mirrorStore) appendLocalmap(short, lid string, n int) error {
 	return err
 }
 
-// ---------- outbox ----------
+// counterName is the counter file of a family: issues count L-<n>, milestones M-<n>.
+func counterName(fam opFamily) (string, error) {
+	switch fam {
+	case famIssue:
+		return "local-seq", nil
+	case famMilestone:
+		return "local-mseq", nil
+	}
+	return "", fmt.Errorf("no local id counter for op family %d", fam)
+}
 
-func (m mirrorStore) opFile(stem string) string { return filepath.Join(m.outboxDir(), stem+".json") }
-
-// opFiles lists outbox/*.json paths, oldest first.
-func (m mirrorStore) opFiles() []string {
-	ents, err := os.ReadDir(m.outboxDir())
+// Next hands out the next number of the family's counter, which only goes up. It holds an exclusive flock
+// on <name>.lock (the counter itself is replaced by rename, so it cannot carry the lock), reads the
+// counter, and writes counter+1 through a temp file. rebuild recomputes a lost or corrupt counter from
+// what is on disk.
+func (c LocalIDs) Next(short string, fam opFamily, rebuild func() int) (int, error) {
+	name, err := counterName(fam)
 	if err != nil {
-		return nil
+		return 0, err
 	}
-	names := []string{}
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	out := make([]string, len(names))
-	for i, n := range names {
-		out[i] = filepath.Join(m.outboxDir(), n)
-	}
-	return out
-}
-
-func (m mirrorStore) readOpBytes(path string) ([]byte, error) { return os.ReadFile(path) }
-func (m mirrorStore) saveOp(o *Op) error                      { return atomicWrite(o.File, o.marshal(), true) }
-func (m mirrorStore) removeOp(file string) error              { return os.Remove(file) }
-
-// ---------- local id sequences ----------
-
-func (m mirrorStore) nextIssueSeq(short string, rebuild func() int) (int, error) {
-	return m.nextCounter(short, "local-seq", rebuild)
-}
-
-func (m mirrorStore) nextMilestoneSeq(short string, rebuild func() int) (int, error) {
-	return m.nextCounter(short, "local-mseq", rebuild)
-}
-
-// nextCounter hands out the next number of a counter that only goes up. name is the counter file under
-// the repo dir ("local-seq", "local-mseq"). It holds an exclusive flock on <name>.lock (the counter itself
-// is replaced by rename, so it cannot carry the lock), reads the counter, and writes counter+1 through a
-// temp file. rebuild recomputes a lost or corrupt counter from what is on disk.
-func (m mirrorStore) nextCounter(short, name string, rebuild func() int) (int, error) {
-	dir := m.repoDir(short)
+	dir := filepath.Join(c.home, short)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
@@ -350,17 +403,49 @@ func (m mirrorStore) nextCounter(short, name string, rebuild func() int) (int, e
 	return n, nil
 }
 
-// readMirrorFile reads a mirror file by a path the store handed out.
-func readMirrorFile(path string) (string, error) { return readText(path) }
+// ---------- Markers: the autosync files ----------
 
-// readIssueHead returns up to n bytes from the start of <repo>/<ident>.md.
-func (m mirrorStore) readIssueHead(short, ident string, n int) (string, error) {
-	f, err := os.Open(m.issueFileIdent(short, ident))
-	if err != nil {
-		return "", err
+type Markers struct{ home string }
+
+func (c Markers) path(name string) string { return filepath.Join(c.home, name) }
+
+// Take claims the .autosync marker for this process. A marker older than staleAfter seconds belongs to a
+// dead sync and is taken over; a younger one means a sync is running and Take says false.
+func (c Markers) Take(staleAfter float64) bool {
+	os.MkdirAll(c.home, 0o755)
+	path := c.path(".autosync")
+	for i := 0; i < 2; i++ {
+		if err := createExcl(path, strconv.Itoa(os.Getpid())+"\n"); err == nil { // M_asmarker
+			return true
+		}
+		st, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if time.Since(st.ModTime()).Seconds() <= staleAfter { // M_asstale
+			return false
+		}
+		gone := path + ".stale." + uuid4()
+		if os.Rename(path, gone) == nil {
+			os.Remove(gone)
+		}
 	}
-	defer f.Close()
-	buf := make([]byte, n)
-	k, _ := f.Read(buf)
-	return string(buf[:k]), nil
+	return false
 }
+
+// Release drops the .autosync marker.
+func (c Markers) Release() { os.Remove(c.path(".autosync")) }
+
+// NoteAgain leaves the note that a write was queued while a sync ran.
+func (c Markers) NoteAgain() { os.WriteFile(c.path(".autosync.again"), nil, 0o644) }
+
+// TakeAgain removes the note and says whether there was one.
+func (c Markers) TakeAgain() bool { return os.Remove(c.path(".autosync.again")) == nil }
+
+// Log opens autosync.log for appending.
+func (c Markers) Log() (*os.File, error) {
+	return os.OpenFile(c.path("autosync.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+}
+
+// LastLog reads autosync.log.
+func (c Markers) LastLog() (string, error) { return readText(c.path("autosync.log")) }

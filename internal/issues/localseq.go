@@ -2,7 +2,6 @@ package issues
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,7 +14,7 @@ import (
 // (the counter itself is replaced by rename, so it cannot carry the lock), reads the counter,
 // writes counter+1 to a temp file and renames it into place.
 func (a *App) nextLocalSeq(short string) (int, error) {
-	return a.mirror().nextIssueSeq(short, func() int { return a.scanMaxSeq(short) })
+	return a.mirror().LocalIDs.Next(short, famIssue, func() int { return a.scanMaxSeq(short) })
 }
 
 // scanMaxSeq is the highest number already in use for alias: sequential local ids in the outbox
@@ -34,13 +33,10 @@ func (a *App) scanMaxSeq(short string) int {
 			}
 		}
 	}
-	if s, err := a.mirror().readLocalmap(); err == nil {
-		for _, line := range strings.Split(s, "\n") {
-			p := strings.Split(line, "\t")
-			if len(p) == 3 && p[0] == short {
-				if n, ok := seqOf(p[1]); ok {
-					note(n)
-				}
+	for _, r := range a.mirror().LocalIDs.Rows() {
+		if r.Short == short {
+			if n, ok := seqOf(r.Lid); ok {
+				note(n)
 			}
 		}
 	}
@@ -50,8 +46,8 @@ func (a *App) scanMaxSeq(short string) int {
 				note(n)
 			}
 		}
-		for _, p := range a.mirrorIssueFiles(short) {
-			if n, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(p), ".md")); err == nil {
+		for _, id := range a.mirror().Issues.Idents(short) {
+			if n, err := strconv.Atoi(id); err == nil {
 				note(n)
 			}
 		}
@@ -83,7 +79,7 @@ func (a *App) newLocalOnly(short, title, body string, labels []string, milestone
 		}{milestone}
 	}
 	err = a.mirror().withLock(".pull.lock", func() error {
-		if err := a.mirror().writeIssueFile(a.mirror().issueFile(short, n), renderIssue(node)); err != nil {
+		if err := a.mirror().Issues.Put(short, strconv.Itoa(n), renderIssue(node)); err != nil {
 			return err
 		}
 		return a.rebuildIndex(short, nil, nil)
@@ -96,15 +92,15 @@ const commentsMark = "\n\n## Comments\n"
 var commentIDRe = regexp.MustCompile(` · id (\d+)\n`)
 
 // loadLocalIssue parses a mirror file written by renderIssue back into a node plus its raw comment text.
-func loadLocalIssue(path string) (*issueNode, string, error) {
-	text, err := readMirrorFile(path)
+func (a *App) loadLocalIssue(short, ident string) (*issueNode, string, error) {
+	text, err := a.mirror().Issues.Get(short, ident)
 	if err != nil {
 		return nil, "", err
 	}
-	h := readHeader(path)
+	h := headerOf(text)
 	end := strings.Index(text, "\n---\n")
 	if h == nil || end < 0 {
-		return nil, "", fmt.Errorf("%s: not an issue file", path)
+		return nil, "", fmt.Errorf("%s/%s.md: not an issue file", short, ident)
 	}
 	rest := strings.TrimPrefix(text[end+len("\n---\n"):], "\n")
 	body, comments := rest, ""
@@ -154,8 +150,8 @@ func (a *App) applyLocalOnly(kind, ref string, args map[string]any) error {
 		return err
 	}
 	return a.mirror().withLock(".pull.lock", func() error {
-		path := a.mirror().issueFile(short, num)
-		node, comments, err := loadLocalIssue(path)
+		ident := strconv.Itoa(num)
+		node, comments, err := a.loadLocalIssue(short, ident)
 		if err != nil {
 			if isNotExist(err) {
 				return die1("no such issue %s", ref)
@@ -175,7 +171,7 @@ func (a *App) applyLocalOnly(kind, ref string, args map[string]any) error {
 			return err
 		}
 		node.UpdatedAt = a.stamp()
-		if err := a.mirror().writeIssueFile(path, renderIssue(node)+comments); err != nil {
+		if err := a.mirror().Issues.Put(short, ident, renderIssue(node)+comments); err != nil {
 			return err
 		}
 		return a.rebuildIndex(short, nil, nil)

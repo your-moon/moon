@@ -73,7 +73,7 @@ func (r msRec) row() string {
 
 // readMsFile parses milestones.tsv (either layout). A missing file is no rows.
 func (a *App) readMsFile(short string) []msRec {
-	s, err := a.mirror().readMsText(short)
+	s, err := a.mirror().Issues.Read(short, fileMilestones)
 	if err != nil {
 		return nil
 	}
@@ -103,7 +103,8 @@ func (a *App) writeMsFile(short string, recs []msRec) error {
 		}
 		b.WriteString(r.row() + "\n")
 	}
-	return a.mirror().writeMsText(short, b.String())
+	_, err := a.mirror().Issues.Write(short, fileMilestones, b.String())
+	return err
 }
 
 var opMarkerRe = regexp.MustCompile(`\s*<!-- moon-op: [^>]*-->`)
@@ -119,16 +120,9 @@ func dueDate(s string) string {
 // msLocalIDs maps a GitHub milestone number to the M-<n> it was created under, from localmap.tsv.
 func (a *App) msLocalIDs(short string) map[int]string {
 	out := map[int]string{}
-	s, err := a.mirror().readLocalmap()
-	if err != nil {
-		return out
-	}
-	for _, line := range strings.Split(s, "\n") {
-		p := strings.Split(line, "\t")
-		if len(p) == 3 && p[0] == short && strings.HasPrefix(p[1], "M-") {
-			if n, err := strconv.Atoi(p[2]); err == nil {
-				out[n] = p[1]
-			}
+	for _, r := range a.mirror().LocalIDs.Rows() {
+		if r.OK && r.Short == short && strings.HasPrefix(r.Lid, "M-") {
+			out[r.N] = r.Lid
 		}
 	}
 	return out

@@ -17,7 +17,7 @@ func (a *App) showNode(short, ident, ref string, ops []*Op) (*issueNode, error) 
 		}
 		return nil, die1("no such local issue %s", ref)
 	}
-	n, _, err := loadLocalIssue(a.mirror().issueFileIdent(short, ident))
+	n, _, err := a.loadLocalIssue(short, ident)
 	if err == nil {
 		return n, nil
 	}
