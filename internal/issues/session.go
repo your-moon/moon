@@ -97,7 +97,7 @@ func NewSessionScoped(cfgPath, dir string, e Env, opt ScopeOpts) (*Session, erro
 		now = time.Now
 	}
 	a := &App{Home: home, GH: ExecGH{}, Out: io.Discard, Err: io.Discard, Stdin: strings.NewReader(""), Now: now, Host: host,
-		Environ: e.Getenv, Repos: cfg.Repos}
+		Environ: e.Getenv, Repos: cfg.Repos, SpawnSync: spawnSync}
 	git := e.GitRemote
 	if git == nil {
 		git = GitRemoteOrigin
@@ -337,18 +337,21 @@ func (s *Session) Release(ref, agent string) (string, error) {
 // Close queues a close (releasing the agent's own claim, as the CLI does with --agent).
 func (s *Session) Close(ref, agent string) error {
 	_, err := s.app.closeIssue(ref, "completed", "", agent, false)
+	s.app.kickPush()
 	return err
 }
 
 // Reopen queues a reopen.
 func (s *Session) Reopen(ref string) error {
 	_, err := s.app.reopen(ref)
+	s.app.kickPush()
 	return err
 }
 
 // Comment queues a comment.
 func (s *Session) Comment(ref, body string) error {
 	_, err := s.app.comment(ref, body)
+	s.app.kickPush()
 	return err
 }
 
@@ -441,12 +444,14 @@ func (s *Session) Milestones() []MilestoneRow {
 // SetMilestone queues a milestone change like `moon issues milestone <ref> <title>`; title "none" clears it.
 func (s *Session) SetMilestone(ref, title string) error {
 	_, err := s.app.setMilestone(ref, title)
+	s.app.kickPush()
 	return err
 }
 
 // Label queues label changes like `moon issues label <ref> --add A --remove B`.
 func (s *Session) Label(ref string, add, remove []string) error {
 	_, err := s.app.labels(ref, add, remove)
+	s.app.kickPush()
 	return err
 }
 
