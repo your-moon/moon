@@ -419,6 +419,11 @@ func (a *App) closeIssue(ref, reason, comment, agent string, noAgent bool) (opRe
 	return r, nil
 }
 
+// reopen queues reopening ref.
+func (a *App) reopen(ref string) (opResult, error) {
+	return a.queueOp("reopen", ref, map[string]any{})
+}
+
 func (a *App) cmdSimple(kind string) func(o *Opts) error {
 	return func(o *Opts) error {
 		args := map[string]any{}
@@ -434,6 +439,13 @@ func (a *App) cmdSimple(kind string) func(o *Opts) error {
 			args["body"] = b
 		case "close":
 			r, err := a.closeIssue(o.Pos[0], o.str("reason"), o.str("comment"), o.str("agent"), !o.Seen["agent"])
+			if err != nil {
+				return err
+			}
+			a.printf("%s", r.line())
+			return nil
+		case "reopen":
+			r, err := a.reopen(o.Pos[0])
 			if err != nil {
 				return err
 			}

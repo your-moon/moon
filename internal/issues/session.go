@@ -361,7 +361,7 @@ func (s *Session) Close(ref, agent string) error {
 
 // Reopen queues a reopen.
 func (s *Session) Reopen(ref string) error {
-	_, err := s.run(func(a *App) error { return a.cmdSimple("reopen")(newOpts([]string{ref})) })
+	_, err := s.app.reopen(ref)
 	return err
 }
 
